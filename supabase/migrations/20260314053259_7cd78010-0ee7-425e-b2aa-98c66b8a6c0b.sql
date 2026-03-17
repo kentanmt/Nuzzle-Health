@@ -1,0 +1,1 @@
+ALTER TABLE public.waitlist_signups ADD COLUMN vet_name text;

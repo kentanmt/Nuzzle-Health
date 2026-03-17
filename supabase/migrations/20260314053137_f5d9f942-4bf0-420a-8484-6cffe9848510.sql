@@ -1,0 +1,1 @@
+ALTER TABLE public.profiles ADD COLUMN vet_name text;
