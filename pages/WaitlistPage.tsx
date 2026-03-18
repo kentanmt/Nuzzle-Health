@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import { NuzzleLogo } from '@/components/NuzzleLogo';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { posthog } from '@/providers/PostHogProvider';
 
 const benefits = [
   { icon: Stethoscope, text: 'Annual comprehensive diagnostic panel' },
@@ -62,6 +63,13 @@ export default function WaitlistPage() {
         ...utmData,
       });
       if (error) throw error;
+      posthog.capture('waitlist_joined', {
+        species: form.species || null,
+        has_pet_name: !!form.petName,
+        has_location: !!form.location,
+        utm_source: utmData.utm_source,
+        utm_campaign: utmData.utm_campaign,
+      });
       setJoined(true);
     } catch (err) {
       console.error('Waitlist signup error:', err);

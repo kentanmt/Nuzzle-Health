@@ -5,7 +5,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ScrollToTop } from "@/components/ScrollToTop";
+import { PostHogProvider } from "@/providers/PostHogProvider";
 import LandingPage from "./pages/LandingPage";
+import AdminPage from "./pages/AdminPage";
 import Dashboard from "./pages/Dashboard";
 import DiagnosticsPage from "./pages/DiagnosticsPage";
 import PetProfilePage from "./pages/PetProfilePage";
@@ -28,6 +30,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <PostHogProvider>
         <ScrollToTop />
         <Routes>
           <Route path="/" element={<LandingPage />} />
@@ -43,8 +46,10 @@ const App = () => (
           <Route path="/how-it-works" element={<HowItWorksPage />} />
           <Route path="/methodology" element={<MethodologyPage />} />
           <Route path="/membership" element={<WaitlistPage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </PostHogProvider>
       </BrowserRouter>
     </TooltipProvider>
     </AuthProvider>
