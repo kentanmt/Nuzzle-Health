@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, TrendingUp, Shield, Bell, Sparkles, HeadphonesIcon, BookOpen, Receipt, Mail, Stethoscope } from 'lucide-react';
+import { ArrowRight, TrendingUp, Shield, Bell, Sparkles, HeadphonesIcon, BookOpen, Receipt, Mail, Stethoscope, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NuzzleLogo } from '@/components/NuzzleLogo';
 import { DashboardPreview } from '@/components/DashboardPreview';
@@ -25,6 +25,7 @@ export default function LandingPage() {
   const { user } = useAuth();
   const [showSignup, setShowSignup] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleDashboardClick = () => {
     if (user) {
@@ -42,7 +43,9 @@ export default function LandingPage() {
           <div className="flex items-center gap-2.5">
             <NuzzleLogo size="md" />
           </div>
-          <div className="flex items-center gap-3">
+
+          {/* Desktop nav */}
+          <div className="hidden md:flex items-center gap-3">
             <Link to="/how-it-works">
               <Button variant="ghost" size="sm" className="text-foreground font-medium hover:text-primary">
                 How It Works
@@ -60,7 +63,40 @@ export default function LandingPage() {
               <Button size="sm">Join Waitlist</Button>
             </Link>
           </div>
+
+          {/* Mobile: Join Waitlist + hamburger */}
+          <div className="flex md:hidden items-center gap-2">
+            <Link to="/waitlist">
+              <Button size="sm">Join Waitlist</Button>
+            </Link>
+            <button
+              className="p-2 rounded-md text-foreground hover:bg-muted transition-colors"
+              onClick={() => setMobileMenuOpen(o => !o)}
+              aria-label="Toggle menu"
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile dropdown menu */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-border bg-cream/98 px-4 py-3 space-y-1">
+            <Link to="/how-it-works" onClick={() => setMobileMenuOpen(false)}>
+              <Button variant="ghost" className="w-full justify-start text-foreground font-medium">
+                How It Works
+              </Button>
+            </Link>
+            <Link to="/triage" onClick={() => setMobileMenuOpen(false)}>
+              <Button variant="ghost" className="w-full justify-start text-foreground font-medium">
+                Symptom Checker
+              </Button>
+            </Link>
+            <Button variant="ghost" className="w-full justify-start text-foreground font-medium" onClick={() => { setMobileMenuOpen(false); handleDashboardClick(); }}>
+              My Pet's Health
+            </Button>
+          </div>
+        )}
       </header>
 
       {/* Video Hero */}

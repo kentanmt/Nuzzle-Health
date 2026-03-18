@@ -33,9 +33,9 @@ export function DashboardPreview() {
         {/* Dashboard content */}
         <div className="p-5 md:p-7 bg-background/50">
           {/* Top row: Score + Key metrics */}
-          <div className="grid grid-cols-12 gap-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
             {/* Health score */}
-            <div className="col-span-4 rounded-xl border border-border/40 bg-card p-5 flex items-center gap-5">
+            <div className="md:col-span-4 rounded-xl border border-border/40 bg-card p-5 flex items-center gap-5">
               <div className="relative h-20 w-20 flex-shrink-0">
                 <svg viewBox="0 0 36 36" className="h-full w-full -rotate-90">
                   <circle cx="18" cy="18" r="15.5" fill="none" stroke="hsl(var(--secondary))" strokeWidth="2.5" />
@@ -58,7 +58,7 @@ export function DashboardPreview() {
             </div>
 
             {/* Score breakdown */}
-            <div className="col-span-5 rounded-xl border border-border/40 bg-card p-5 space-y-2.5">
+            <div className="md:col-span-5 rounded-xl border border-border/40 bg-card p-5 space-y-2.5">
               <p className="text-xs font-semibold text-foreground">Score Breakdown</p>
               {[
                 { label: 'Bloodwork', val: 92, color: 'hsl(var(--score-optimal))' },
@@ -77,7 +77,7 @@ export function DashboardPreview() {
             </div>
 
             {/* Quick stats */}
-            <div className="col-span-3 space-y-3">
+            <div className="md:col-span-3 grid grid-cols-3 md:grid-cols-1 gap-3">
               {[
                 { icon: Activity, label: 'Avg Activity', value: '54 min/day' },
                 { icon: Droplets, label: 'Weight', value: '65 lbs' },
@@ -97,7 +97,7 @@ export function DashboardPreview() {
           </div>
 
           {/* Bottom row: Insights */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Insight cards */}
             <div className="rounded-xl border border-border/40 bg-card p-5 space-y-3">
               <div className="flex items-center gap-1.5">

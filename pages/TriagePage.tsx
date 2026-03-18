@@ -439,7 +439,7 @@ export default function TriagePage() {
                       className="h-11"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Breed</label>
                       <Input
@@ -461,7 +461,7 @@ export default function TriagePage() {
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground mb-2 block">Age</label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {['Under 1 year', '1–3 years', '4–7 years', '8–10 years', '11+ years'].map(age => (
                         <button
                           key={age}

@@ -21,7 +21,7 @@ export function HeroHealthScore() {
       initial={{ opacity: 0, y: 20, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.8, delay: 1 }}
-      className="rounded-2xl border border-white/15 bg-white/10 backdrop-blur-xl p-5 space-y-4 w-[280px]"
+      className="rounded-2xl border border-white/15 bg-white/10 backdrop-blur-xl p-5 space-y-4 w-full max-w-[280px]"
     >
       {/* Score ring */}
       <div className="flex items-center gap-4">
