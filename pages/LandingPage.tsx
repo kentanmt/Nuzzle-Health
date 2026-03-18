@@ -71,11 +71,11 @@ export default function LandingPage() {
         <div className="container max-w-5xl mx-auto">
           <div className="text-center space-y-4 mb-14">
             <h2 className="text-3xl md:text-4xl font-heading text-foreground">
-              We pay for your pet's bloodwork.<br />
-              <span className="text-primary">You get the intelligence.</span>
+              Turn every vet visit into<br />
+              <span className="text-primary">lasting health intelligence.</span>
             </h2>
             <p className="text-lg text-muted-foreground max-w-xl mx-auto leading-relaxed">
-              Nuzzle gives you credits toward your pet's lab costs at any vet, then turns the results into a living health profile with AI-powered trend tracking and early warnings.
+              Nuzzle transforms your pet's bloodwork into a living health profile — with personalized AI insights, trend tracking, and early warnings tailored to your pet's breed, age, and history.
             </p>
           </div>
 
@@ -83,8 +83,8 @@ export default function LandingPage() {
           <div className="grid md:grid-cols-3 gap-6 max-w-3xl mx-auto mb-10">
             {[
               { step: '1', title: 'Visit any vet', desc: 'Get bloodwork done at your trusted vet. No network, no extra appointments.' },
-              { step: '2', title: 'Share the results', desc: 'Forward the email or upload the PDF. We parse everything automatically.' },
-              { step: '3', title: 'Earn credits & insights', desc: 'We help cover the cost and turn data into actionable health intelligence.' },
+              { step: '2', title: 'Share the results', desc: 'We instantly extract every marker, build your pet\'s health timeline, and start surfacing what matters — no manual entry needed.' },
+              { step: '3', title: 'Receive your health intelligence', desc: 'Get personalized AI-powered insights, trend alerts, and recommendations tailored specifically to your pet.' },
             ].map(({ step, title, desc }) => (
               <motion.div
                 key={step}
@@ -347,7 +347,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Methodology CTA */}
+      {/* Methodology CTA — hidden until ready to publish */}
+      {/*
       <section className="py-16 bg-muted/30">
         <div className="container text-center space-y-4 max-w-2xl mx-auto">
           <BookOpen className="h-8 w-8 text-primary mx-auto" />
@@ -364,6 +365,7 @@ export default function LandingPage() {
           </Link>
         </div>
       </section>
+      */}
 
       {/* Footer */}
       <footer className="border-t border-border py-8 bg-card/50">
@@ -372,8 +374,6 @@ export default function LandingPage() {
             <NuzzleLogo size="sm" />
           </div>
           <div className="flex items-center gap-4">
-            <Link to="/methodology" className="hover:text-foreground transition-colors">Methodology</Link>
-            <span>&middot;</span>
             <Link to="/membership" className="hover:text-foreground transition-colors">Membership</Link>
             <span>&middot;</span>
             <p>&copy; {new Date().getFullYear()} Nuzzle Health</p>
