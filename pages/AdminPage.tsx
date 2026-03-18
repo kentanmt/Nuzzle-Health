@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { NuzzleLogo } from '@/components/NuzzleLogo';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { Users, PawPrint, ClipboardList, TrendingUp, LogOut, RefreshCw } from 'lucide-react';
+import { Users, PawPrint, ClipboardList, TrendingUp, LogOut, RefreshCw, Lock } from 'lucide-react';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL;
 const COLORS = ['#4a7c59', '#82b59a', '#c9dfd0', '#e8f4ec'];
@@ -48,17 +48,25 @@ function StatCard({ icon: Icon, label, value, sub }: { icon: any; label: string;
 }
 
 export default function AdminPage() {
-  const { user, loading, signOut } = useAuth();
-  const navigate = useNavigate();
+  const { user, loading, signIn, signOut } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
   const [fetching, setFetching] = useState(true);
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
 
   const isAdmin = !loading && user?.email === ADMIN_EMAIL;
 
-  useEffect(() => {
-    if (!loading && !user) { navigate('/'); return; }
-    if (!loading && !isAdmin) { navigate('/'); return; }
-  }, [user, loading, isAdmin, navigate]);
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoggingIn(true);
+    setLoginError('');
+    const { error } = await signIn(loginForm.email, loginForm.password);
+    if (error) {
+      setLoginError('Invalid email or password.');
+    }
+    setLoggingIn(false);
+  };
 
   async function fetchStats() {
     setFetching(true);
@@ -122,7 +130,51 @@ export default function AdminPage() {
     if (isAdmin) fetchStats();
   }, [isAdmin]);
 
-  if (loading || !isAdmin) return null;
+  if (loading) return null;
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-full max-w-sm space-y-6 p-8 rounded-2xl border border-border bg-card shadow-sm">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <div className="h-12 w-12 rounded-full bg-sage-light flex items-center justify-center">
+              <Lock className="h-5 w-5 text-primary" />
+            </div>
+            <NuzzleLogo size="sm" />
+            <p className="text-sm text-muted-foreground">Admin access only</p>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Email</label>
+              <Input
+                type="email"
+                value={loginForm.email}
+                onChange={e => setLoginForm(p => ({ ...p, email: e.target.value }))}
+                placeholder="you@example.com"
+                required
+                className="h-11"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Password</label>
+              <Input
+                type="password"
+                value={loginForm.password}
+                onChange={e => setLoginForm(p => ({ ...p, password: e.target.value }))}
+                placeholder="••••••••"
+                required
+                className="h-11"
+              />
+            </div>
+            {loginError && <p className="text-xs text-destructive">{loginError}</p>}
+            <Button type="submit" className="w-full h-11" disabled={loggingIn}>
+              {loggingIn ? 'Signing in…' : 'Sign In'}
+            </Button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
