@@ -1,0 +1,84 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1200" height="630" fill="#f5efe6"/>
+
+  <!-- Subtle grid texture -->
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#3d6b5210" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+
+  <!-- Soft green glow top-right -->
+  <ellipse cx="1050" cy="100" rx="400" ry="280" fill="#3d6b5208"/>
+
+  <!-- Soft green glow bottom-left -->
+  <ellipse cx="150" cy="530" rx="300" ry="200" fill="#3d6b5210"/>
+
+  <!-- Logo icon background -->
+  <rect x="80" y="72" width="56" height="56" rx="14" fill="#3d6b52"/>
+
+  <!-- Nuzzle star icon -->
+  <path d="M108 82C108 82 113.75 97.5 108 103C102 103 88 103 88 103C88 103 102 98.5 108 103C108 109 108 124 108 124C108 124 102.25 109.5 108 103C114 103 128 103 128 103C128 103 114 107.5 108 103Z" fill="white"/>
+  <path d="M108 84C110.25 93.75 116.25 99.75 126 103C116.25 106.25 110.25 112.25 108 122C105.75 112.25 99.75 106.25 90 103C99.75 99.75 105.75 93.75 108 84Z" fill="white"/>
+
+  <!-- Brand name -->
+  <text x="154" y="107" font-family="Georgia, serif" font-size="36" font-weight="700" fill="#1a2e1f" letter-spacing="-0.5">Nuzzle Health</text>
+
+  <!-- Divider -->
+  <rect x="80" y="158" width="120" height="3" rx="2" fill="#3d6b52"/>
+
+  <!-- Main headline -->
+  <text x="80" y="240" font-family="Georgia, serif" font-size="62" font-weight="700" fill="#1a2e1f" letter-spacing="-1">Your pet's health,</text>
+  <text x="80" y="312" font-family="Georgia, serif" font-size="62" font-weight="700" fill="#3d6b52" letter-spacing="-1">understood deeply.</text>
+
+  <!-- Sub copy -->
+  <text x="80" y="374" font-family="-apple-system, system-ui, sans-serif" font-size="26" fill="#4a5e50" letter-spacing="0">Personalized health intelligence for every pet.</text>
+
+  <!-- Feature pills -->
+  <rect x="80" y="418" width="200" height="44" rx="22" fill="#3d6b5215" stroke="#3d6b5230" stroke-width="1.5"/>
+  <text x="180" y="446" font-family="-apple-system, system-ui, sans-serif" font-size="18" fill="#3d6b52" text-anchor="middle" font-weight="500">AI Insights</text>
+
+  <rect x="298" y="418" width="220" height="44" rx="22" fill="#3d6b5215" stroke="#3d6b5230" stroke-width="1.5"/>
+  <text x="408" y="446" font-family="-apple-system, system-ui, sans-serif" font-size="18" fill="#3d6b52" text-anchor="middle" font-weight="500">Trend Tracking</text>
+
+  <rect x="536" y="418" width="238" height="44" rx="22" fill="#3d6b5215" stroke="#3d6b5230" stroke-width="1.5"/>
+  <text x="655" y="446" font-family="-apple-system, system-ui, sans-serif" font-size="18" fill="#3d6b52" text-anchor="middle" font-weight="500">Early Warnings</text>
+
+  <!-- Domain -->
+  <text x="80" y="560" font-family="-apple-system, system-ui, sans-serif" font-size="22" fill="#8aab94" letter-spacing="0.5">nuzzlehealth.pet</text>
+
+  <!-- Health score card (right side) -->
+  <rect x="740" y="100" width="380" height="430" rx="24" fill="white" opacity="0.75"/>
+  <rect x="740" y="100" width="380" height="430" rx="24" stroke="#3d6b5220" stroke-width="1.5" fill="none"/>
+
+  <!-- Card header -->
+  <text x="775" y="150" font-family="-apple-system, system-ui, sans-serif" font-size="15" fill="#8aab94" font-weight="500" letter-spacing="0.5">HEALTH OVERVIEW</text>
+
+  <!-- Score ring -->
+  <circle cx="930" cy="265" r="85" fill="none" stroke="#e8f0ea" stroke-width="12"/>
+  <circle cx="930" cy="265" r="85" fill="none" stroke="#3d6b52" stroke-width="12"
+    stroke-dasharray="534" stroke-dashoffset="80"
+    stroke-linecap="round"
+    transform="rotate(-90 930 265)"/>
+  <text x="930" y="255" font-family="Georgia, serif" font-size="48" fill="#1a2e1f" text-anchor="middle" font-weight="700">87</text>
+  <text x="930" y="278" font-family="-apple-system, system-ui, sans-serif" font-size="13" fill="#8aab94" text-anchor="middle" letter-spacing="1">OPTIMAL</text>
+
+  <!-- Metric bars -->
+  <text x="775" y="386" font-family="-apple-system, system-ui, sans-serif" font-size="13" fill="#8aab94">Bloodwork</text>
+  <rect x="775" y="393" width="305" height="6" rx="3" fill="#e8f0ea"/>
+  <rect x="775" y="393" width="280" height="6" rx="3" fill="#3d6b52"/>
+
+  <text x="775" y="418" font-family="-apple-system, system-ui, sans-serif" font-size="13" fill="#8aab94">Activity</text>
+  <rect x="775" y="425" width="305" height="6" rx="3" fill="#e8f0ea"/>
+  <rect x="775" y="425" width="268" height="6" rx="3" fill="#3d6b52"/>
+
+  <text x="775" y="450" font-family="-apple-system, system-ui, sans-serif" font-size="13" fill="#8aab94">Weight</text>
+  <rect x="775" y="457" width="305" height="6" rx="3" fill="#e8f0ea"/>
+  <rect x="775" y="457" width="238" height="6" rx="3" fill="#e8a87c"/>
+
+  <text x="775" y="482" font-family="-apple-system, system-ui, sans-serif" font-size="13" fill="#8aab94">Vitals</text>
+  <rect x="775" y="489" width="305" height="6" rx="3" fill="#e8f0ea"/>
+  <rect x="775" y="489" width="290" height="6" rx="3" fill="#3d6b52"/>
+</svg>
