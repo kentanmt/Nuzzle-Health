@@ -56,6 +56,21 @@ export default function AdminPage() {
   const [loggingIn, setLoggingIn] = useState(false);
 
   const isAdmin = !loading && user?.email === ADMIN_EMAIL;
+  const [seeding, setSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState<string | null>(null);
+
+  const handleSeedKnowledge = async () => {
+    setSeeding(true);
+    setSeedResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('seed-vet-knowledge');
+      if (error) throw error;
+      setSeedResult(`✓ Seeded ${data.inserted} chunks into the knowledge base.`);
+    } catch (e: any) {
+      setSeedResult(`✗ Seed failed: ${e.message}`);
+    }
+    setSeeding(false);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -190,6 +205,10 @@ export default function AdminPage() {
               <RefreshCw className={`h-3.5 w-3.5 ${fetching ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
+            <Button variant="outline" size="sm" onClick={handleSeedKnowledge} disabled={seeding} className="gap-1.5 text-xs">
+              {seeding ? 'Seeding…' : 'Seed AI Knowledge'}
+            </Button>
+            {seedResult && <span className="text-xs text-muted-foreground">{seedResult}</span>}
             <Button variant="ghost" size="sm" onClick={() => { signOut(); navigate('/'); }} className="gap-1.5 text-muted-foreground">
               <LogOut className="h-3.5 w-3.5" />
               Sign Out

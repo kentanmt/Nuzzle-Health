@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,13 +9,14 @@ const corsHeaders = {
 
 const SYSTEM_PROMPT = `You are a veterinary triage AI assistant for Nuzzle Health, a pet health platform. You provide thoughtful, empathetic, and medically informed symptom assessments for dogs and cats.
 
-You will receive structured data about a pet's symptoms, follow-up answers, behavioral observations, and medical history. Your job is to analyze all of this together and produce a comprehensive triage assessment.
+You will receive structured data about a pet's symptoms, follow-up answers, behavioral observations, medical history, AND retrieved veterinary knowledge context from authoritative sources (Cornell AHDC, eClinPath, Merck Veterinary Manual, WSAVA guidelines).
 
 IMPORTANT RULES:
 - You are NOT diagnosing. You are triaging — helping pet owners understand urgency and next steps.
 - Always err on the side of caution. If in doubt, recommend seeing a vet.
 - Be warm and empathetic — pet owners are worried. Use the pet's name.
 - Be specific about WHY you're recommending what you recommend — reference the actual symptoms and answers provided.
+- Use the retrieved veterinary knowledge context to ground your assessment in evidence-based medicine.
 - Never recommend human medications.
 - For cats not eating 2+ days, ALWAYS flag hepatic lipidosis risk.
 - For male cats straining to urinate, ALWAYS flag urethral obstruction as emergency.
@@ -50,8 +52,8 @@ IMPORTANT for homeCare:
 - ALWAYS include homeCare, even for emergency/vet-soon cases. For emergencies, focus on stabilization while getting to the vet.
 - Be specific and practical — "feed bland diet" is too vague. "Feed boiled chicken breast (no skin/bones) with plain white rice, 1/4 cup portions every 4-6 hours" is good.
 - Include timing and durations for each step.
-- The doNotDo section is critical — warn against common dangerous home remedies (human medications, certain foods, etc).
-- For monitor/home levels, provide 3-5 detailed home care steps. For vet-soon/emergency, provide 2-3 stabilization steps to do while arranging vet care.
+- The doNotDo section is critical — warn against common dangerous home remedies.
+- For monitor/home levels, provide 3-5 detailed home care steps. For vet-soon/emergency, provide 2-3 stabilization steps.
 
 Level definitions:
 - "emergency": Life-threatening, go to ER vet NOW (GDV, urethral obstruction, respiratory distress, poisoning, seizures, uncontrolled bleeding)
@@ -59,6 +61,50 @@ Level definitions:
 - "vet-scheduled": Schedule a vet visit this week (concerning but stable)
 - "monitor": Watch closely 24-48 hours, vet if worsens (mild, pet otherwise acting normal)
 - "home": Likely manageable at home with monitoring (very mild, all behavioral checks normal)`;
+
+async function getRagContext(
+  symptoms: string[],
+  species: string,
+  openaiApiKey: string,
+  supabaseUrl: string,
+  supabaseKey: string
+): Promise<string> {
+  try {
+    const query = `${species} symptoms: ${symptoms.join(", ")}`;
+
+    const embeddingRes = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({ input: query, model: "text-embedding-3-small" }),
+    });
+
+    if (!embeddingRes.ok) return "";
+
+    const embeddingData = await embeddingRes.json();
+    const embedding = embeddingData.data[0].embedding;
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const { data } = await supabase.rpc("match_vet_knowledge", {
+      query_embedding: embedding,
+      match_count: 5,
+      filter_species: species === "dog" ? "dog" : "cat",
+      filter_document_type: null,
+    });
+
+    if (!data || data.length === 0) return "";
+
+    const context = (data as any[])
+      .map((d) => `[${d.source}]\n${d.content}`)
+      .join("\n\n---\n\n");
+
+    return `\n\n## Retrieved Veterinary Knowledge (use to ground your assessment)\n${context}`;
+  } catch {
+    return "";
+  }
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -68,15 +114,25 @@ serve(async (req) => {
   try {
     const { petInfo, symptoms, followUps, behavioral, historyFlags } = await req.json();
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    if (!OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY is not configured");
     }
 
-    // Build a detailed prompt from the structured data
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    // Retrieve RAG context
+    const ragContext = await getRagContext(
+      symptoms,
+      petInfo.species || "dog",
+      OPENAI_API_KEY,
+      supabaseUrl,
+      supabaseKey
+    );
+
     const petName = petInfo.name || `the ${petInfo.species || "pet"}`;
-    
-    // Breed benchmark lookup for symptom context
+
     const breedBenchmarks: Record<string, { predispositions: string; screening: string }> = {
       "labrador retriever": { predispositions: "Hip dysplasia, obesity, exercise-induced collapse, PRA", screening: "Hip eval, weight monitoring" },
       "golden retriever": { predispositions: "Cancer, hip dysplasia, SAS, hypothyroidism", screening: "Cancer screening after 6, cardiac exam" },
@@ -99,12 +155,13 @@ serve(async (req) => {
       "ragdoll": { predispositions: "HCM, bladder stones, FIP susceptibility", screening: "HCM screening, urinalysis" },
       "domestic shorthair": { predispositions: "Obesity, dental disease, FLUTD, diabetes, CKD", screening: "Weight management, senior bloodwork from age 7" },
     };
-    
+
     const breedKey = (petInfo.breed || "").toLowerCase().trim();
-    const breedData = breedBenchmarks[breedKey] 
-      || Object.entries(breedBenchmarks).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1]
-      || null;
-    
+    const breedData =
+      breedBenchmarks[breedKey] ||
+      Object.entries(breedBenchmarks).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] ||
+      null;
+
     const petDetails = [
       `Species: ${petInfo.species || "unknown"}`,
       petInfo.name ? `Name: ${petInfo.name}` : null,
@@ -117,22 +174,16 @@ serve(async (req) => {
     ].filter(Boolean).join("\n");
 
     const symptomList = symptoms.length > 0 ? symptoms.join(", ") : "None specified";
-
     const followUpDetails = followUps.length > 0
       ? followUps.map((f: { question: string; answer: string }) => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
       : "No follow-up details provided";
-
     const behavioralNormal = behavioral.length > 0
       ? `The following are STILL NORMAL: ${behavioral.join(", ")}`
       : "Owner did not confirm any normal behaviors (concerning)";
-
     const behavioralAbnormal = behavioral.length < 8
       ? `Potentially abnormal (not checked as normal): behaviors not confirmed`
       : "All behavioral checks confirmed normal";
-
-    const historyDetails = historyFlags.length > 0
-      ? historyFlags.join(", ")
-      : "No relevant history flags";
+    const historyDetails = historyFlags.length > 0 ? historyFlags.join(", ") : "No relevant history flags";
 
     const userMessage = `Please assess the following pet case:
 
@@ -157,22 +208,24 @@ Normal behaviors confirmed: ${behavioral.length} out of 8
 
 ## Medical History Flags
 ${historyDetails}
+${ragContext}
 
 Please provide your triage assessment as JSON.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "gpt-4o-mini",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userMessage },
         ],
-        stream: false,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
       }),
     });
 
@@ -183,14 +236,8 @@ Please provide your triage assessment as JSON.`;
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "AI usage limit reached. Please try again later." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
       const errText = await response.text();
-      console.error("AI gateway error:", response.status, errText);
+      console.error("OpenAI error:", response.status, errText);
       return new Response(JSON.stringify({ error: "Failed to get AI assessment" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -200,15 +247,11 @@ Please provide your triage assessment as JSON.`;
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
 
-    if (!content) {
-      throw new Error("No content in AI response");
-    }
+    if (!content) throw new Error("No content in AI response");
 
-    // Parse the JSON from the AI response (handle potential markdown code blocks)
     let parsed;
     try {
-      const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      parsed = JSON.parse(cleaned);
+      parsed = JSON.parse(content);
     } catch {
       console.error("Failed to parse AI response:", content);
       throw new Error("Could not parse AI assessment");

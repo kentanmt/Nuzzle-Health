@@ -6,6 +6,57 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+async function getRagContext(
+  markers: any[],
+  species: string,
+  openaiApiKey: string,
+  supabaseUrl: string,
+  supabaseKey: string
+): Promise<string> {
+  try {
+    if (!markers || markers.length === 0) return "";
+
+    const outOfRange = markers.filter((m: any) => m.status && m.status !== "normal");
+    const queryTerms = outOfRange.length > 0
+      ? outOfRange.map((m: any) => `${m.name} ${m.status}`).join(", ")
+      : markers.slice(0, 5).map((m: any) => m.name).join(", ");
+
+    const query = `${species} lab markers: ${queryTerms} interpretation reference ranges clinical significance`;
+
+    const embeddingRes = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({ input: query, model: "text-embedding-3-small" }),
+    });
+
+    if (!embeddingRes.ok) return "";
+
+    const embeddingData = await embeddingRes.json();
+    const embedding = embeddingData.data[0].embedding;
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const { data } = await supabase.rpc("match_vet_knowledge", {
+      query_embedding: embedding,
+      match_count: 6,
+      filter_species: species === "cat" ? "cat" : "dog",
+      filter_document_type: null,
+    });
+
+    if (!data || data.length === 0) return "";
+
+    const context = (data as any[])
+      .map((d) => `[${d.source}]\n${d.content}`)
+      .join("\n\n---\n\n");
+
+    return `\n\n## Retrieved Veterinary Reference Data (use to ground scoring and insights)\n${context}`;
+  } catch {
+    return "";
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -22,7 +73,7 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
+    const openaiApiKey = Deno.env.get("OPENAI_API_KEY")!;
 
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } },
@@ -39,7 +90,6 @@ serve(async (req) => {
 
     const user = { id: claimsData.claims.sub as string };
 
-    // Fetch pet
     const { data: pets } = await supabase
       .from("pets")
       .select("*")
@@ -56,26 +106,22 @@ serve(async (req) => {
 
     const pet = pets[0];
 
-    // Fetch parsed labs
     const { data: labs } = await supabase
       .from("parsed_lab_results")
       .select("*")
       .eq("pet_id", pet.id)
       .order("test_date", { ascending: false });
 
-    // Fetch pet records for context
     const { data: records } = await supabase
       .from("pet_records")
       .select("id, title, record_type, record_date, created_at")
       .eq("pet_id", pet.id)
       .order("created_at", { ascending: false });
 
-    // Build comprehensive context for AI
     const labsWithMarkers = (labs || []).filter((l: any) => l.markers && (l.markers as any[]).length > 0);
     const rawVaccinations = (labs || []).flatMap((l: any) => (l.vaccinations as any[]) || []);
     const allCareRecs = (labs || []).flatMap((l: any) => (l.care_recommendations as any[]) || []);
 
-    // Deduplicate vaccinations: normalize names, keep most recent administration per type
     const normalizeVaxName = (name: string): string => {
       const lower = name.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim();
       if (lower.includes('rabies')) return 'rabies';
@@ -100,13 +146,10 @@ serve(async (req) => {
         const newDate = vax.date_administered || vax.dateAdministered;
         const existingTime = existingDate ? new Date(existingDate).getTime() : 0;
         const newTime = newDate ? new Date(newDate).getTime() : 0;
-        if (newTime > existingTime) {
-          vaxByType.set(key, vax);
-        }
+        if (newTime > existingTime) vaxByType.set(key, vax);
       }
     }
 
-    // Recalculate status dynamically based on today's date
     const nowDate = new Date();
     const thirtyDaysFromNow = new Date(nowDate.getTime() + 30 * 24 * 60 * 60 * 1000);
     const allVaccinations = Array.from(vaxByType.values()).map((vax: any) => {
@@ -119,17 +162,13 @@ serve(async (req) => {
         return { ...vax, status, _normalized: normalizeVaxName(vax.name) };
       }
       const adminStr = vax.date_administered || vax.dateAdministered;
-      if (adminStr) {
-        return { ...vax, status: 'current', _normalized: normalizeVaxName(vax.name) };
-      }
+      if (adminStr) return { ...vax, status: 'current', _normalized: normalizeVaxName(vax.name) };
       return { ...vax, _normalized: normalizeVaxName(vax.name) };
     });
 
     const today = nowDate.toISOString().split("T")[0];
 
-    // ===== BREED BENCHMARK LOOKUP =====
     const breedBenchmarks: Record<string, any> = {
-      // Dogs
       "labrador retriever": { weight: "55–80 lbs", senior: 7, lifespan: "10–12 yrs", predispositions: "Hip dysplasia, obesity, exercise-induced collapse, PRA", screening: "Hip eval after age 2, weight monitoring, annual eye exam" },
       "golden retriever": { weight: "55–75 lbs", senior: 7, lifespan: "10–12 yrs", predispositions: "Cancer (hemangiosarcoma, lymphoma), hip dysplasia, SAS, hypothyroidism", screening: "Cancer screening after age 6, annual cardiac exam, thyroid panel" },
       "german shepherd": { weight: "50–90 lbs", senior: 7, lifespan: "9–13 yrs", predispositions: "Hip dysplasia, degenerative myelopathy, EPI, GDV, allergies", screening: "Hip/elbow eval by age 2, GDV awareness, fecal elastase if chronic loose stool" },
@@ -155,7 +194,6 @@ serve(async (req) => {
       "miniature schnauzer": { weight: "11–20 lbs", senior: 10, lifespan: "12–15 yrs", predispositions: "Pancreatitis, hyperlipidemia, urolithiasis, diabetes, cataracts", screening: "Low-fat diet, lipid panel, pancreatitis monitoring" },
       "cocker spaniel": { weight: "20–30 lbs", senior: 9, lifespan: "12–15 yrs", predispositions: "Ear infections, cherry eye, cataracts, hypothyroidism, AIHA", screening: "Ear cleaning biweekly, annual eye exam, thyroid panel" },
       "mixed breed": { weight: "20–70 lbs", senior: 8, lifespan: "10–14 yrs", predispositions: "Hybrid vigor reduces breed-specific risk; dental disease, obesity common", screening: "Standard preventive care, weight and dental monitoring" },
-      // Cats
       "domestic shorthair": { weight: "8–11 lbs", senior: 10, lifespan: "12–18 yrs", predispositions: "Obesity, dental disease, FLUTD, diabetes, CKD", screening: "Weight management, dental annually, senior bloodwork from age 7, urinalysis from age 7" },
       "domestic longhair": { weight: "8–11 lbs", senior: 10, lifespan: "12–18 yrs", predispositions: "Obesity, hairballs/GI, dental disease, CKD", screening: "Grooming, weight monitoring, senior bloodwork from age 7" },
       "maine coon": { weight: "10–25 lbs", senior: 9, lifespan: "10–13 yrs", predispositions: "HCM, hip dysplasia, SMA, PKD", screening: "Annual echocardiogram for HCM, hip eval, kidney screening" },
@@ -168,14 +206,13 @@ serve(async (req) => {
       "scottish fold": { weight: "6–13 lbs", senior: 10, lifespan: "11–14 yrs", predispositions: "Osteochondrodysplasia, PKD, cardiomyopathy", screening: "Joint health monitoring, PKD screening, cardiac eval" },
     };
 
-    // Look up breed benchmark
     const breedKey = (pet.breed || "mixed breed").toLowerCase().trim();
     const speciesDefault = pet.species === "cat" ? "domestic shorthair" : "mixed breed";
-    const benchmark = breedBenchmarks[breedKey] 
-      || Object.entries(breedBenchmarks).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1]
-      || breedBenchmarks[speciesDefault];
+    const benchmark =
+      breedBenchmarks[breedKey] ||
+      Object.entries(breedBenchmarks).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] ||
+      breedBenchmarks[speciesDefault];
 
-    // Compute weight trend analysis
     const weightHistory = (labs || [])
       .filter((l: any) => l.weight_value != null)
       .map((l: any) => ({ date: l.test_date, weight: l.weight_value, unit: l.weight_unit }))
@@ -193,6 +230,17 @@ serve(async (req) => {
       weightTrendAnalysis = `Single measurement: ${weightHistory[0].weight} ${weightHistory[0].unit} on ${weightHistory[0].date}. Breed ideal: ${benchmark?.weight || "unknown"}.`;
     }
 
+    const latestMarkers = labsWithMarkers[0]?.markers || [];
+
+    // Retrieve RAG context for out-of-range markers
+    const ragContext = await getRagContext(
+      latestMarkers,
+      pet.species || "dog",
+      openaiApiKey,
+      supabaseUrl,
+      supabaseKey
+    );
+
     const petContext = {
       name: pet.name,
       species: pet.species,
@@ -207,7 +255,7 @@ serve(async (req) => {
       total_records: (records || []).length,
       total_lab_results: labsWithMarkers.length,
       latest_lab_date: labsWithMarkers[0]?.test_date || null,
-      latest_markers: labsWithMarkers[0]?.markers || [],
+      latest_markers: latestMarkers,
       all_markers_history: labsWithMarkers.map((l: any) => ({
         date: l.test_date,
         vet: l.vet_name,
@@ -234,6 +282,8 @@ Analyze this pet's complete health profile and return a JSON response with TWO s
 1. HEALTH SCORE: A comprehensive health score (0-100) with breakdown across 4 dimensions.
 2. INSIGHTS: 3-5 personalized, actionable health insights based on real data.
 
+You will also receive retrieved veterinary reference data from Cornell AHDC, eClinPath, Merck Veterinary Manual, and WSAVA guidelines — use this to ground your scoring and insights in evidence-based medicine.
+
 BREED-AWARE SCORING RULES:
 - Bloodwork (0-100): Analyze actual lab markers against reference ranges. Each out-of-range marker reduces the score. BUN below range = mild concern (-5). SDMA or Creatinine elevated = kidney concern (-10-20). ALT/ALP elevated = liver concern (-10-15). All in range = 90-100. If the pet has breed predispositions, pay special attention to related markers.
 - Weight (0-100): Use the breed_benchmark.ideal_weight to assess whether current weight is appropriate. Use weight_trend_analysis for trajectory. Within breed range and stable = 90-95. Outside breed range = 70-80. Significant trend (>10% change) = 60-75.
@@ -246,20 +296,19 @@ INSIGHT RULES:
 - Action: max 8 words, verb-first imperative.
 - Include risk level: "low" (good/maintenance), "medium" (watch/action), "high" (urgent).
 - CRITICAL: For vaccines, ONLY flag overdue if pre-calculated status is "overdue". Current = do NOT suggest renewal.
-- Use breed predispositions to generate breed-specific screening insights (e.g., "HCM screening recommended for Maine Coons").
+- Use breed predispositions to generate breed-specific screening insights.
 - Prioritize: overdue vaccines > out-of-range markers > breed-specific risks > weight > condition management > preventive.
 - Do NOT generate generic advice. Every insight must tie to THIS pet's actual data or breed profile.
+- Use retrieved veterinary reference data to provide more accurate and specific interpretations.`;
 
-If the pet has existing conditions, cross-reference with breed predispositions and track relevant markers across visits.`;
-
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${lovableApiKey}`,
+        Authorization: `Bearer ${openaiApiKey}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
           {
@@ -267,6 +316,7 @@ If the pet has existing conditions, cross-reference with breed predispositions a
             content: `Analyze this pet's health data and return ONLY valid JSON (no markdown, no code blocks):
 
 ${JSON.stringify(petContext, null, 2)}
+${ragContext}
 
 Return this exact structure:
 {
@@ -288,7 +338,7 @@ Return this exact structure:
       "title": "max 5 words, punchy",
       "description": "ONE sentence max 20 words, reference a specific value or date",
       "riskLevel": "low" | "medium" | "high",
-      "action": "max 8 words, verb-first imperative (e.g. 'Schedule recheck in 3 months')",
+      "action": "max 8 words, verb-first imperative",
       "category": "bloodwork" | "weight" | "vaccines" | "conditions" | "preventive"
     }
   ]
@@ -296,21 +346,17 @@ Return this exact structure:
           },
         ],
         temperature: 0.2,
+        response_format: { type: "json_object" },
         max_tokens: 4000,
       }),
     });
 
     if (!aiResponse.ok) {
       const errText = await aiResponse.text();
-      console.error("AI error:", aiResponse.status, errText);
+      console.error("OpenAI error:", aiResponse.status, errText);
       if (aiResponse.status === 429) {
         return new Response(JSON.stringify({ error: "Rate limited, please try again later." }), {
           status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (aiResponse.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       return new Response(JSON.stringify({ error: "AI analysis failed" }), {
