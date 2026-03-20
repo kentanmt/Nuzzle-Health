@@ -65,26 +65,29 @@ Level definitions:
 async function getRagContext(
   symptoms: string[],
   species: string,
-  openaiApiKey: string,
+  geminiApiKey: string,
   supabaseUrl: string,
   supabaseKey: string
 ): Promise<string> {
   try {
     const query = `${species} symptoms: ${symptoms.join(", ")}`;
 
-    const embeddingRes = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openaiApiKey}`,
-      },
-      body: JSON.stringify({ input: query, model: "text-embedding-3-small" }),
-    });
+    const embeddingRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${geminiApiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "models/text-embedding-004",
+          content: { parts: [{ text: query }] },
+        }),
+      }
+    );
 
     if (!embeddingRes.ok) return "";
 
     const embeddingData = await embeddingRes.json();
-    const embedding = embeddingData.data[0].embedding;
+    const embedding = embeddingData.embedding.values;
 
     const supabase = createClient(supabaseUrl, supabaseKey);
     const { data } = await supabase.rpc("match_vet_knowledge", {
@@ -114,9 +117,9 @@ serve(async (req) => {
   try {
     const { petInfo, symptoms, followUps, behavioral, historyFlags } = await req.json();
 
-    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-    if (!OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not configured");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is not configured");
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -126,7 +129,7 @@ serve(async (req) => {
     const ragContext = await getRagContext(
       symptoms,
       petInfo.species || "dog",
-      OPENAI_API_KEY,
+      GEMINI_API_KEY,
       supabaseUrl,
       supabaseKey
     );
@@ -212,22 +215,18 @@ ${ragContext}
 
 Please provide your triage assessment as JSON.`;
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userMessage },
-        ],
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-      }),
-    });
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: "user", parts: [{ text: userMessage }] }],
+          generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
+        }),
+      }
+    );
 
     if (!response.ok) {
       if (response.status === 429) {
@@ -237,7 +236,7 @@ Please provide your triage assessment as JSON.`;
         });
       }
       const errText = await response.text();
-      console.error("OpenAI error:", response.status, errText);
+      console.error("Gemini error:", response.status, errText);
       return new Response(JSON.stringify({ error: "Failed to get AI assessment" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -245,7 +244,7 @@ Please provide your triage assessment as JSON.`;
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!content) throw new Error("No content in AI response");
 

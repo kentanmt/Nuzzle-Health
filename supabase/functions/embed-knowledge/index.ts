@@ -13,7 +13,7 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
-  const openaiApiKey = Deno.env.get("OPENAI_API_KEY")!;
+  const geminiApiKey = Deno.env.get("GEMINI_API_KEY")!;
 
   try {
     const { chunks, replace_all } = await req.json();
@@ -28,17 +28,17 @@ serve(async (req) => {
 
     for (const chunk of chunks) {
       try {
-        const embeddingRes = await fetch("https://api.openai.com/v1/embeddings", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${openaiApiKey}`,
-          },
-          body: JSON.stringify({
-            input: chunk.content,
-            model: "text-embedding-3-small",
-          }),
-        });
+        const embeddingRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${geminiApiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "models/text-embedding-004",
+              content: { parts: [{ text: chunk.content }] },
+            }),
+          }
+        );
 
         if (!embeddingRes.ok) {
           const err = await embeddingRes.text();
@@ -47,7 +47,7 @@ serve(async (req) => {
         }
 
         const embeddingData = await embeddingRes.json();
-        const embedding = embeddingData.data[0].embedding;
+        const embedding = embeddingData.embedding.values;
 
         const { error } = await supabase.from("vet_knowledge").insert({
           content: chunk.content,

@@ -5,7 +5,7 @@ create extension if not exists vector;
 create table if not exists vet_knowledge (
   id uuid primary key default gen_random_uuid(),
   content text not null,
-  embedding vector(1536),
+  embedding vector(768),
   source text not null,
   document_type text not null, -- 'lab_reference' | 'symptom' | 'drug_interaction' | 'guideline' | 'pre_analytical'
   species text default 'both',  -- 'dog' | 'cat' | 'both'
@@ -22,7 +22,7 @@ create index if not exists vet_knowledge_embedding_idx
 
 -- Similarity search function
 create or replace function match_vet_knowledge(
-  query_embedding vector(1536),
+  query_embedding vector(768),
   match_count int default 6,
   filter_species text default null,
   filter_document_type text default null

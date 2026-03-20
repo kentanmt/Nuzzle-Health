@@ -9,7 +9,7 @@ const corsHeaders = {
 async function getRagContext(
   markers: any[],
   species: string,
-  openaiApiKey: string,
+  geminiApiKey: string,
   supabaseUrl: string,
   supabaseKey: string
 ): Promise<string> {
@@ -23,19 +23,22 @@ async function getRagContext(
 
     const query = `${species} lab markers: ${queryTerms} interpretation reference ranges clinical significance`;
 
-    const embeddingRes = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openaiApiKey}`,
-      },
-      body: JSON.stringify({ input: query, model: "text-embedding-3-small" }),
-    });
+    const embeddingRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${geminiApiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "models/text-embedding-004",
+          content: { parts: [{ text: query }] },
+        }),
+      }
+    );
 
     if (!embeddingRes.ok) return "";
 
     const embeddingData = await embeddingRes.json();
-    const embedding = embeddingData.data[0].embedding;
+    const embedding = embeddingData.embedding.values;
 
     const supabase = createClient(supabaseUrl, supabaseKey);
     const { data } = await supabase.rpc("match_vet_knowledge", {
@@ -73,7 +76,7 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const openaiApiKey = Deno.env.get("OPENAI_API_KEY")!;
+    const geminiApiKey = Deno.env.get("GEMINI_API_KEY")!;
 
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } },
@@ -236,7 +239,7 @@ serve(async (req) => {
     const ragContext = await getRagContext(
       latestMarkers,
       pet.species || "dog",
-      openaiApiKey,
+      geminiApiKey,
       supabaseUrl,
       supabaseKey
     );
@@ -301,19 +304,7 @@ INSIGHT RULES:
 - Do NOT generate generic advice. Every insight must tie to THIS pet's actual data or breed profile.
 - Use retrieved veterinary reference data to provide more accurate and specific interpretations.`;
 
-    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openaiApiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: `Analyze this pet's health data and return ONLY valid JSON (no markdown, no code blocks):
+    const userPrompt = `Analyze this pet's health data and return ONLY valid JSON (no markdown, no code blocks):
 
 ${JSON.stringify(petContext, null, 2)}
 ${ragContext}
@@ -342,18 +333,24 @@ Return this exact structure:
       "category": "bloodwork" | "weight" | "vaccines" | "conditions" | "preventive"
     }
   ]
-}`,
-          },
-        ],
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-        max_tokens: 4000,
-      }),
-    });
+}`;
+
+    const aiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
+        }),
+      }
+    );
 
     if (!aiResponse.ok) {
       const errText = await aiResponse.text();
-      console.error("OpenAI error:", aiResponse.status, errText);
+      console.error("Gemini error:", aiResponse.status, errText);
       if (aiResponse.status === 429) {
         return new Response(JSON.stringify({ error: "Rate limited, please try again later." }), {
           status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -365,7 +362,7 @@ Return this exact structure:
     }
 
     const aiData = await aiResponse.json();
-    let rawContent = aiData.choices?.[0]?.message?.content || "{}";
+    let rawContent = aiData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
     rawContent = rawContent.trim();
     if (rawContent.startsWith("```")) {
       rawContent = rawContent.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
