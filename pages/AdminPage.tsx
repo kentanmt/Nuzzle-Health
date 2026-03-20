@@ -66,7 +66,8 @@ export default function AdminPage() {
     try {
       const { data, error } = await supabase.functions.invoke('seed-vet-knowledge');
       if (error) throw error;
-      setSeedResult(`✓ Seeded ${data.inserted} chunks into the knowledge base.`);
+      const errSummary = data.errors?.length ? ` (${data.errors.length} errors: ${data.errors[0]})` : '';
+      setSeedResult(`✓ Seeded ${data.inserted ?? 0} chunks.${errSummary}`);
     } catch (e: any) {
       setSeedResult(`✗ Seed failed: ${e.message}`);
     }
