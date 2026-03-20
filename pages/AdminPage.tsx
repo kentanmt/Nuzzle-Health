@@ -54,6 +54,30 @@ export default function AdminPage() {
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [loginError, setLoginError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedResult, setSeedResult] = useState('');
+
+  const handleSeedKnowledge = async () => {
+    setSeeding(true);
+    setSeedResult('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/seed-vet-knowledge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+      });
+      const data = await res.json();
+      if (data.success) setSeedResult(`✓ ${data.inserted} chunks seeded`);
+      else setSeedResult(`Error: ${data.error}`);
+    } catch (e: any) {
+      setSeedResult(`Error: ${e.message}`);
+    }
+    setSeeding(false);
+  };
 
   const isAdmin = !loading && user?.email === ADMIN_EMAIL;
   const [seeding, setSeeding] = useState(false);
