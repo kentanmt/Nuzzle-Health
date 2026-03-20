@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { NuzzleLogo } from '@/components/NuzzleLogo';
@@ -49,6 +50,7 @@ function StatCard({ icon: Icon, label, value, sub }: { icon: any; label: string;
 
 export default function AdminPage() {
   const { user, loading, signIn, signOut } = useAuth();
+  const navigate = useNavigate();
   const [stats, setStats] = useState<Stats | null>(null);
   const [fetching, setFetching] = useState(true);
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
