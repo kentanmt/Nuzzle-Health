@@ -71,7 +71,10 @@ export default async function handler(req: any, res: any) {
     const supabaseKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY!;
     const geminiApiKey = process.env.VITE_GEMINI_KEY!;
 
-    if (!geminiApiKey) throw new Error('GEMINI API key not configured');
+    if (!geminiApiKey) {
+      console.error('Missing VITE_GEMINI_KEY env var');
+      throw new Error('GEMINI API key not configured');
+    }
 
     // Use user's token so RLS applies — data isolation is enforced by Supabase
     const supabase = createClient(supabaseUrl, supabaseKey, {

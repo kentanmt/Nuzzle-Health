@@ -124,10 +124,15 @@ export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
 
   try {
-    const { petInfo, symptoms, followUps, behavioral, historyFlags } = req.body;
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    if (!body) { res.status(400).json({ error: 'Request body missing' }); return; }
+    const { petInfo, symptoms, followUps, behavioral, historyFlags } = body;
 
     const GEMINI_API_KEY = process.env.VITE_GEMINI_KEY;
-    if (!GEMINI_API_KEY) throw new Error('GEMINI API key not configured');
+    if (!GEMINI_API_KEY) {
+      console.error('Missing VITE_GEMINI_KEY env var');
+      throw new Error('GEMINI API key not configured');
+    }
 
     const OPENAI_API_KEY = process.env.VITE_OPENAI_KEY || '';
     const supabaseUrl = process.env.VITE_SUPABASE_URL!;
