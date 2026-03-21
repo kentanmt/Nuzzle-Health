@@ -17,7 +17,29 @@ const categories = [
   { key: 'thyroid', label: 'Thyroid' },
   { key: 'electrolytes', label: 'Electrolytes' },
   { key: 'urinalysis', label: 'Urinalysis' },
+  { key: 'other', label: 'Other' },
 ] as const;
+
+type CategoryKey = typeof categories[number]['key'];
+
+/**
+ * The Gemini parser returns broad categories (cbc, chemistry, urinalysis, thyroid, other).
+ * This function maps chemistry markers into more specific subcategories by marker name,
+ * so users can browse kidney, liver, metabolic, and electrolyte panels separately.
+ */
+function resolveCategory(markerName: string, rawCategory: string): CategoryKey {
+  // Already a specific known category — keep it
+  if (rawCategory === 'cbc' || rawCategory === 'thyroid' || rawCategory === 'urinalysis') return rawCategory as CategoryKey;
+
+  // Sub-classify chemistry and other by marker name
+  const n = markerName.toLowerCase();
+  if (['bun', 'creatinine', 'sdma', 'urea nitrogen', 'blood urea'].some(k => n.includes(k))) return 'kidney';
+  if (['alt', 'ast', 'alp', 'albumin', 'bilirubin', 'ggt', 'total protein', 'globulin', 'tbili', 'dbili'].some(k => n.includes(k))) return 'liver';
+  if (['glucose', 'fructosamine'].some(k => n.includes(k))) return 'glucose';
+  if (['sodium', 'potassium', 'chloride', 'bicarbonate', 'calcium', 'phosphorus', 'magnesium', 'co2', 'anion gap'].some(k => n.includes(k))) return 'electrolytes';
+  // Anything left over from chemistry / other goes to 'other'
+  return 'other';
+}
 
 export default function DiagnosticsPage() {
   const [activeTab, setActiveTab] = useState<string>('cbc');
@@ -117,7 +139,7 @@ export default function DiagnosticsPage() {
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full flex flex-wrap gap-1 h-auto bg-secondary p-1">
                 {categories.map(c => {
-                  const hasMarkers = latestResult.markers.some(m => m.category === c.key);
+                  const hasMarkers = latestResult.markers.some(m => resolveCategory(m.name, m.category) === c.key);
                   return (
                     <TabsTrigger
                       key={c.key}
@@ -133,7 +155,16 @@ export default function DiagnosticsPage() {
               </TabsList>
 
               {categories.map(c => {
-                const markers = latestResult.markers.filter(m => m.category === c.key);
+                const markers = latestResult.markers
+                  .filter(m => resolveCategory(m.name, m.category) === c.key)
+                  .sort((a, b) => {
+                    // Sort out-of-range markers to the top
+                    const aOut = a.value < a.referenceMin || a.value > a.referenceMax;
+                    const bOut = b.value < b.referenceMin || b.value > b.referenceMax;
+                    if (aOut && !bOut) return -1;
+                    if (!aOut && bOut) return 1;
+                    return 0;
+                  });
                 return (
                   <TabsContent key={c.key} value={c.key} className="space-y-6 mt-4">
                     {markers.length === 0 ? (
@@ -143,27 +174,45 @@ export default function DiagnosticsPage() {
                     ) : (
                       <>
                         <div className="rounded-xl border border-border bg-card overflow-hidden">
-                          <div className="p-4 border-b border-border bg-secondary/30">
-                            <p className="text-sm font-semibold text-foreground">{c.label} Panel — {markers.length} markers</p>
+                          <div className="p-4 border-b border-border bg-secondary/30 flex items-center justify-between">
+                            <p className="text-sm font-semibold text-foreground">{c.label} Panel — {markers.length} marker{markers.length !== 1 ? 's' : ''}</p>
+                            {markers.some(m => m.value < m.referenceMin || m.value > m.referenceMax) && (
+                              <span className="text-[10px] font-semibold text-score-elevated bg-score-elevated/10 rounded-full px-2 py-0.5">
+                                {markers.filter(m => m.value < m.referenceMin || m.value > m.referenceMax).length} out of range
+                              </span>
+                            )}
                           </div>
                           <div className="divide-y divide-border">
                             {markers.map(marker => {
-                              const pct = ((marker.value - marker.referenceMin) / (marker.referenceMax - marker.referenceMin)) * 100;
-                              const inRange = pct >= 0 && pct <= 100;
-                              const nearEdge = pct < 15 || pct > 85;
+                              const range = marker.referenceMax - marker.referenceMin;
+                              const pct = range > 0 ? ((marker.value - marker.referenceMin) / range) * 100 : 50;
+                              const inRange = marker.value >= marker.referenceMin && marker.value <= marker.referenceMax;
+                              const nearEdge = inRange && (pct < 15 || pct > 85);
                               return (
                                 <div key={marker.name} className="flex items-center justify-between p-4 hover:bg-secondary/20 transition-colors">
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-foreground">{marker.name}</p>
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-sm font-medium text-foreground">{marker.name}</p>
+                                      {!inRange && (
+                                        <span className="text-[10px] font-semibold text-score-elevated bg-score-elevated/10 rounded-full px-1.5 py-0.5">
+                                          {marker.value < marker.referenceMin ? '↓ Low' : '↑ High'}
+                                        </span>
+                                      )}
+                                      {nearEdge && (
+                                        <span className="text-[10px] font-semibold text-score-watch bg-score-watch/10 rounded-full px-1.5 py-0.5">
+                                          Near edge
+                                        </span>
+                                      )}
+                                    </div>
                                     <p className="text-xs text-muted-foreground">Ref: {marker.referenceMin}–{marker.referenceMax} {marker.unit}</p>
                                   </div>
                                   <div className="flex items-center gap-3">
-                                    <div className="hidden sm:block w-24 h-2 bg-secondary rounded-full overflow-hidden relative">
+                                    <div className="hidden sm:block w-28 h-2.5 bg-secondary rounded-full overflow-hidden relative">
                                       <div
-                                        className="absolute h-full rounded-full"
+                                        className="absolute inset-y-0 rounded-full"
                                         style={{
                                           left: '0%',
-                                          width: `${Math.min(100, Math.max(0, pct))}%`,
+                                          width: `${Math.min(100, Math.max(2, pct))}%`,
                                           backgroundColor: inRange ? (nearEdge ? 'hsl(var(--score-watch))' : 'hsl(var(--score-optimal))') : 'hsl(var(--score-elevated))',
                                         }}
                                       />
@@ -180,13 +229,28 @@ export default function DiagnosticsPage() {
                           </div>
                         </div>
 
-                        <div className="grid md:grid-cols-2 gap-4">
-                          {[...new Set(
-                            labResults.flatMap(r => r.markers.filter(m => m.category === c.key).map(m => m.name))
-                          )].slice(0, 4).map(name => (
-                            <MarkerChart key={name} markerName={name} results={labResults} />
-                          ))}
-                        </div>
+                        {labResults.length > 1 && (
+                          <div>
+                            <p className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
+                              <span className="h-1.5 w-1.5 rounded-full bg-primary inline-block" />
+                              Longitudinal trends ({labResults.length} visits)
+                            </p>
+                            <div className="grid md:grid-cols-2 gap-4">
+                              {[...new Set(
+                                labResults.flatMap(r => r.markers.filter(m => resolveCategory(m.name, m.category) === c.key).map(m => m.name))
+                              )].map(name => (
+                                <MarkerChart key={name} markerName={name} results={labResults} />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {labResults.length === 1 && (
+                          <div className="grid md:grid-cols-2 gap-4">
+                            {markers.map(marker => (
+                              <MarkerChart key={marker.name} markerName={marker.name} results={labResults} />
+                            ))}
+                          </div>
+                        )}
                       </>
                     )}
                   </TabsContent>

@@ -183,29 +183,44 @@ export default async function handler(req: Request): Promise<Response> {
       breed_benchmark: benchmark ? { ideal_weight: benchmark.weight, senior_age: benchmark.senior, life_expectancy: benchmark.lifespan, predispositions: benchmark.predispositions, screening_notes: benchmark.screening } : null,
     };
 
-    const systemPrompt = `You are Nuzzle Health AI, an expert veterinary health analyst. Today's date is ${today}.
+    const systemPrompt = `You are Nuzzle Health Intelligence, an expert veterinary health analyst. Today's date is ${today}.
 
-Analyze this pet's complete health profile and return a JSON response with TWO sections:
+Analyze this pet's COMPLETE health history and return a JSON response with TWO sections:
 1. HEALTH SCORE: A comprehensive health score (0-100) with breakdown across 4 dimensions.
-2. INSIGHTS: 3-5 personalized, actionable health insights based on real data.
+2. INSIGHTS: 4-6 personalized, actionable insights that leverage longitudinal trends.
 
-You will also receive retrieved veterinary reference data — use this to ground your scoring in evidence-based medicine.
+## LONGITUDINAL ANALYSIS (critical — use all_markers_history, not just latest values)
+When multiple lab visits are available:
+- Compare each key marker across visits. Note direction: improving, stable, or worsening.
+- A marker trending toward the edge of its range (even if still "normal") is clinically significant.
+- A previously out-of-range marker that has normalized is a positive insight worth noting.
+- Flag any marker that has consistently worsened over 2+ visits — even if still technically in range.
+- Provide insights that reference specific dates and values (e.g. "BUN rose from 18 to 26 between Jan and Mar").
+- Weight trends over time are important: gradual gain or loss has different significance than a single snapshot.
 
-BREED-AWARE SCORING RULES:
-- Bloodwork (0-100): Each out-of-range marker reduces the score. All in range = 90-100.
-- Weight (0-100): Use breed_benchmark.ideal_weight and weight_trend_analysis. Within breed range = 90-95.
+## SCORING RULES
+- Bloodwork (0-100): Start at 95. Each out-of-range marker: -5 to -15 based on severity. Worsening trend even in range: -3 to -8. Improving trend: +2 to +5 bonus.
+- Weight (0-100): Use breed_benchmark.ideal_weight + weight_trend_analysis. Within ideal = 90-95. Rapid change = -10 to -20.
 - Preventive Care (0-100): TRUST the pre-calculated "status" field on each vaccination. All current = 90-100. Overdue = -10-15 each.
-- Age & Conditions (0-100): Use breed_benchmark.senior_age. Each chronic condition = -10 to -20.
+- Age & Conditions (0-100): Use breed_benchmark.senior_age. Senior + conditions = score accordingly.
 
-INSIGHT RULES:
-- Each insight MUST be max 20 words, referencing a specific value or date.
-- Title: max 5 words. Action: max 8 words, verb-first. Risk: low/medium/high.
-- ONLY flag vaccines as overdue if pre-calculated status is "overdue".`;
+## INSIGHT RULES
+- 4-6 insights total. Each must reference ACTUAL data from this pet — no generic advice.
+- Prioritize: (1) out-of-range markers with trend, (2) worsening trends even in range, (3) improving markers worth celebrating, (4) vaccine/care gaps, (5) breed-specific screening due.
+- Title: 4-6 words. Description: 1-2 sentences with specific values and dates. Action: verb-first, specific.
+- ONLY flag vaccines as overdue if pre-calculated status is "overdue".
+- If only 1 lab visit exists, note that trends will improve with more uploads.`;
 
-    const userPrompt = `Analyze this pet's health data and return ONLY valid JSON (no markdown):
+    const labCount = labsWithMarkers.length;
+    const longitudinalNote = labCount > 1
+      ? `This pet has ${labCount} lab visits. You MUST perform longitudinal analysis — compare marker values across all visits in all_markers_history and identify trends (improving, stable, worsening). Reference specific dates and values in your insights.`
+      : `This pet has only 1 lab visit. Analyze current values against reference ranges and breed predispositions. Note in one insight that uploading future labs will enable trend tracking.`;
+
+    const userPrompt = `Analyze this pet's complete health history and return ONLY valid JSON (no markdown).
+
+${longitudinalNote}
 
 ${JSON.stringify(petContext, null, 2)}
-${ragContext}
 
 Return this exact structure:
 {"health_score":{"overall":number,"category":"optimal"|"watch"|"elevated","change":number,"summary":"string","breakdown":{"bloodwork":{"score":number,"label":"string"},"weight":{"score":number,"label":"string"},"preventive_care":{"score":number,"label":"string"},"age_conditions":{"score":number,"label":"string"}}},"insights":[{"id":"string","title":"string","description":"string","riskLevel":"low"|"medium"|"high","action":"string","category":"bloodwork"|"weight"|"vaccines"|"conditions"|"preventive"}]}`;

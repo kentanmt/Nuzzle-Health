@@ -207,7 +207,7 @@ export default function Dashboard() {
             {aiHealth && (
               <div className="absolute top-3 right-3 flex items-center gap-1 text-[10px] text-primary bg-sage-light rounded-full px-2 py-0.5">
                 <Sparkles className="h-3 w-3" />
-                AI Powered
+                Health Intelligence
               </div>
             )}
             {/* Show skeleton while AI is loading for real pets */}
@@ -423,7 +423,7 @@ export default function Dashboard() {
               </h3>
               {isRealPet && aiHealth && (
                 <span className="text-[10px] text-muted-foreground bg-muted rounded-full px-2 py-0.5">
-                  AI-generated from {pet.name}'s data
+                  Generated from {pet.name}'s data
                 </span>
               )}
             </div>
@@ -439,14 +439,14 @@ export default function Dashboard() {
         {isRealPet && aiLoading && insights.length === 0 && (
           <div className="rounded-2xl border border-border bg-card p-8 flex items-center justify-center gap-3">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Analyzing {pet.name}'s health data with AI...</p>
+            <p className="text-sm text-muted-foreground">Building {pet.name}'s health insights...</p>
           </div>
         )}
 
         {/* AI error state */}
         {isRealPet && aiError && !aiLoading && insights.length === 0 && (
           <div className="rounded-2xl border border-border bg-card p-6 text-center space-y-2">
-            <p className="text-sm text-muted-foreground">Couldn't generate AI insights right now.</p>
+            <p className="text-sm text-muted-foreground">Couldn't generate insights right now.</p>
             <button
               onClick={refetchAI}
               className="text-xs text-primary hover:underline flex items-center gap-1 mx-auto"
@@ -587,14 +587,48 @@ export default function Dashboard() {
 
         {isRealPet && labsWithMarkers.length > 0 && (
           <div className="space-y-4">
-            <h3 className="font-heading text-lg text-foreground flex items-center gap-2">
-              <Droplets className="h-5 w-5 text-primary" />
-              {pet.name}'s Biomarker Trends
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="font-heading text-lg text-foreground flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-primary" />
+                {pet.name}'s Key Biomarkers
+              </h3>
+              <Link
+                to="/diagnostics"
+                className="text-xs text-primary hover:underline flex items-center gap-1"
+              >
+                View all labs →
+              </Link>
+            </div>
             <div className="grid md:grid-cols-2 gap-4">
-              {[...new Set(labsWithMarkers.flatMap(r => r.markers.map(m => m.name)))].slice(0, 4).map(name => (
-                <MarkerChart key={name} markerName={name} results={labsWithMarkers} />
-              ))}
+              {(() => {
+                const allNames = [...new Set(labsWithMarkers.flatMap(r => r.markers.map(m => m.name)))];
+                const latestMarkers = labsWithMarkers[0]?.markers || [];
+                // Score each marker: out-of-range = 100, near edge = 50, trending wrong direction = +20, in range = 0
+                const scored = allNames.map(name => {
+                  const latest = latestMarkers.find(m => m.name === name);
+                  let priority = 0;
+                  if (latest) {
+                    const inRange = latest.value >= latest.referenceMin && latest.value <= latest.referenceMax;
+                    if (!inRange) {
+                      priority = 100;
+                    } else {
+                      const range = latest.referenceMax - latest.referenceMin;
+                      if (range > 0) {
+                        const pct = (latest.value - latest.referenceMin) / range;
+                        if (pct < 0.15 || pct > 0.85) priority = 50;
+                      }
+                    }
+                    // Bonus for markers with historical data (worth tracking longitudinally)
+                    const historicalCount = labsWithMarkers.filter(r => r.markers.some(m => m.name === name)).length;
+                    if (historicalCount > 1) priority += 10;
+                  }
+                  return { name, priority };
+                });
+                scored.sort((a, b) => b.priority - a.priority);
+                return scored.slice(0, 6).map(({ name }) => (
+                  <MarkerChart key={name} markerName={name} results={labsWithMarkers} />
+                ));
+              })()}
             </div>
           </div>
         )}

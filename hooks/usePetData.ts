@@ -128,7 +128,7 @@ export function usePetData() {
     const PARSE_PROMPT = `You are a veterinary medical records parser. Extract all structured data from this veterinary document.\nReturn ONLY valid JSON (no markdown, no code blocks):\n{"vet_name":string|null,"lab_source":string|null,"test_date":"YYYY-MM-DD"|null,"weight_value":number|null,"weight_unit":"lbs","markers":[{"name":string,"value":number,"unit":string,"referenceMin":number|null,"referenceMax":number|null,"status":"normal|high|low|critical","category":"cbc|chemistry|urinalysis|thyroid|other"}],"vaccinations":[{"name":string,"date_administered":"YYYY-MM-DD"|null,"date_due":"YYYY-MM-DD"|null,"lot_number":string|null,"manufacturer":string|null}],"care_recommendations":[{"type":"followup|medication|screening|diet|other","title":string,"description":string,"due_date":"YYYY-MM-DD"|null,"priority":"low|medium|high"}]}\nExtract ALL lab markers, vaccinations, and care recommendations. Return only the JSON object.`;
 
     const callGemini = () => fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${geminiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
