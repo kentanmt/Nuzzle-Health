@@ -32,6 +32,7 @@ export default function RecordsPage() {
   const [reparsingId, setReparsingId] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [parsing, setParsing] = useState(false);
   const [uploadForm, setUploadForm] = useState({
     title: '',
     recordType: 'lab-report',
@@ -96,7 +97,10 @@ export default function RecordsPage() {
 
       if (uploadError) throw uploadError;
 
-      const { error: insertError } = await supabase.from('pet_records').insert({
+      const parsableTypes = ['lab-report', 'vaccine', 'vet-visit'];
+      const isParsable = parsableTypes.includes(uploadForm.recordType);
+
+      const { data: insertedRecord, error: insertError } = await supabase.from('pet_records').insert({
         pet_id: pet.id,
         user_id: user.id,
         title: uploadForm.title.trim(),
@@ -105,15 +109,32 @@ export default function RecordsPage() {
         record_type: uploadForm.recordType,
         record_date: uploadForm.recordDate,
         notes: uploadForm.notes.trim() || null,
-      });
+      }).select().single();
 
       if (insertError) throw insertError;
 
-      const parsableTypes = ['lab-report', 'vaccine', 'vet-visit'];
-      toast({ title: 'Record uploaded! 📄', description: parsableTypes.includes(uploadForm.recordType) ? 'Records will be parsed automatically for vaccinations, labs & care data.' : undefined });
+      // Close dialog immediately so user sees progress
       setShowUpload(false);
       setSelectedFile(null);
       setUploadForm({ title: '', recordType: 'lab-report', recordDate: new Date().toISOString().split('T')[0], notes: '' });
+
+      // Immediately kick off parsing for parsable record types
+      if (isParsable && insertedRecord) {
+        setUploading(false);
+        setParsing(true);
+        toast({ title: 'Record uploaded! 📄', description: 'Parsing labs, vaccines & care data now...' });
+        try {
+          await parsePdfRecord(insertedRecord);
+          toast({ title: 'Parsing complete ✨', description: 'Labs, vaccines and care data are now updated.' });
+        } catch (parseErr: any) {
+          toast({ title: 'Parsing failed', description: parseErr.message, variant: 'destructive' });
+        } finally {
+          setParsing(false);
+        }
+      } else {
+        toast({ title: 'Record uploaded! 📄' });
+      }
+
       await refetch();
     } catch (err: any) {
       toast({ title: 'Upload failed', description: err.message, variant: 'destructive' });
@@ -170,6 +191,12 @@ export default function RecordsPage() {
       </header>
 
       <main className="container py-6 max-w-4xl mx-auto space-y-6">
+        {parsing && (
+          <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-sage-light/40 px-4 py-3 text-sm text-primary">
+            <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
+            <span>Parsing your record — extracting labs, vaccines &amp; care data...</span>
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -381,13 +408,13 @@ export default function RecordsPage() {
             <Button
               className="w-full gap-2"
               size="lg"
-              disabled={!selectedFile || uploading}
+              disabled={!selectedFile || uploading || parsing}
               onClick={handleUpload}
             >
               {uploading ? (
                 <><Loader2 className="h-4 w-4 animate-spin" /> Uploading...</>
               ) : (
-                <><Upload className="h-4 w-4" /> Upload Record</>
+                <><Upload className="h-4 w-4" /> Upload &amp; Parse</>
               )}
             </Button>
           </div>
