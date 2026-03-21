@@ -62,9 +62,6 @@ export default function AdminPage() {
 
   const handleSeedKnowledge = async () => {
     setSeeding(true);
-    setSeedResult('Coming soon — RAG knowledge base requires upgraded API access.');
-    setSeeding(false);
-    return;
     const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
     if (!GEMINI_KEY) { setSeedResult('✗ VITE_GEMINI_KEY not set in Vercel env vars'); setSeeding(false); return; }
 
@@ -109,7 +106,7 @@ export default function AdminPage() {
       const errors: string[] = [];
       for (const chunk of CHUNKS) {
         const embRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key=${GEMINI_KEY}`,
+          `https://generativelanguage.googleapis.com/v1/models/embedding-001:embedContent?key=${GEMINI_KEY}`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'models/embedding-001', content: { parts: [{ text: chunk.content }] } }) }
         );
         if (!embRes.ok) { errors.push(`Embed failed: ${await embRes.text()}`); continue; }
