@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Pet, LabResult, LabMarker, VaccinationRecord, CareRecommendation } from '@/lib/types';
 
 export function usePetData() {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const [pet, setPet] = useState<Pet | null>(null);
   const [petRecords, setPetRecords] = useState<any[]>([]);
   const [parsedLabs, setParsedLabs] = useState<LabResult[]>([]);
@@ -107,7 +107,7 @@ export function usePetData() {
 
   // Trigger PDF parsing for unprocessed records
   const parseUnprocessedRecords = useCallback(async () => {
-    if (!user || petRecords.length === 0) return;
+    if (!user || !session?.access_token || petRecords.length === 0) return;
 
     const parsableTypes = ['lab-report', 'vaccine', 'vet-visit'];
     const labRecords = petRecords.filter((r) => parsableTypes.includes(r.record_type) && r.file_url);
@@ -120,15 +120,11 @@ export function usePetData() {
     const parsedIds = new Set((existing || []).map((e: any) => e.pet_record_id));
     const unparsed = labRecords.filter((r) => !parsedIds.has(r.id));
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData?.session?.access_token;
-    if (!accessToken) return;
-
     for (const record of unparsed) {
       try {
         await supabase.functions.invoke('parse-lab-pdf', {
           body: { pet_record_id: record.id },
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: { Authorization: `Bearer ${session.access_token}` },
         });
       } catch (err) {
         console.error('Failed to parse record:', record.id, err);
@@ -138,7 +134,7 @@ export function usePetData() {
     if (unparsed.length > 0) {
       await fetchData();
     }
-  }, [user, petRecords, fetchData]);
+  }, [user, session, petRecords, fetchData]);
 
   useEffect(() => {
     if (petRecords.length > 0) {

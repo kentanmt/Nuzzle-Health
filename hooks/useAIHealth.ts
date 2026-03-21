@@ -35,22 +35,20 @@ export interface AIHealthData {
 }
 
 export function useAIHealth(isRealPet: boolean, dataReady: boolean) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const [data, setData] = useState<AIHealthData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchAIHealth = useCallback(async () => {
-    if (!user || !isRealPet || !dataReady) return;
-    
+    if (!user || !isRealPet || !dataReady || !session?.access_token) return;
+
     setLoading(true);
     setError(null);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
       const { data: fnData, error: fnError } = await supabase.functions.invoke('pet-health-ai', {
-        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+        headers: { Authorization: `Bearer ${session.access_token}` },
       });
 
       if (fnError) {
