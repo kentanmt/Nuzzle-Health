@@ -1,5 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
-
 export const config = { runtime: 'edge' };
 
 const corsHeaders = {
@@ -86,33 +84,6 @@ const breedProfiles: Record<string, { predispositions: string; screening: string
   'domestic shorthair': { predispositions: 'Obesity, dental disease, FLUTD, diabetes, CKD', screening: 'Weight management, senior bloodwork from age 7' },
 };
 
-async function getRagContext(symptoms: string[], species: string, openaiApiKey: string, supabaseUrl: string, supabaseKey: string): Promise<string> {
-  try {
-    if (!openaiApiKey || symptoms.length === 0) return '';
-    const query = `${species} symptoms: ${symptoms.join(', ')}`;
-    const embeddingRes = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiApiKey}` },
-      body: JSON.stringify({ model: 'text-embedding-3-small', input: query, dimensions: 768 }),
-    });
-    if (!embeddingRes.ok) return '';
-    const embeddingData = await embeddingRes.json();
-    const embedding = embeddingData.data[0].embedding;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-    const { data } = await supabase.rpc('match_vet_knowledge', {
-      query_embedding: embedding,
-      match_count: 5,
-      filter_species: species === 'dog' ? 'dog' : 'cat',
-      filter_document_type: null,
-    });
-    if (!data || data.length === 0) return '';
-    const context = (data as any[]).map((d) => `[${d.source}]\n${d.content}`).join('\n\n---\n\n');
-    return `\n\n## Retrieved Veterinary Knowledge (use to ground your assessment)\n${context}`;
-  } catch {
-    return '';
-  }
-}
-
 export default async function handler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -123,16 +94,6 @@ export default async function handler(req: Request): Promise<Response> {
 
     const GEMINI_API_KEY = (process.env as any).VITE_GEMINI_KEY;
     if (!GEMINI_API_KEY) return new Response(JSON.stringify({ error: 'Server misconfigured: missing GEMINI key' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-
-    const OPENAI_API_KEY = (process.env as any).VITE_OPENAI_KEY || '';
-    const supabaseUrl = (process.env as any).VITE_SUPABASE_URL!;
-    const supabaseKey = (process.env as any).VITE_SUPABASE_PUBLISHABLE_KEY!;
-
-    // Fetch RAG context with a 5s timeout — never blocks Gemini call
-    const ragContext = await Promise.race([
-      getRagContext(symptoms, petInfo.species || 'dog', OPENAI_API_KEY, supabaseUrl, supabaseKey),
-      new Promise<string>(resolve => setTimeout(() => resolve(''), 5000)),
-    ]);
 
     const breedKey = (petInfo.breed || '').toLowerCase().trim();
     const breedData = breedProfiles[breedKey] || Object.entries(breedProfiles).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] || null;
@@ -172,12 +133,11 @@ Normal behaviors confirmed: ${behavioral.length} out of 8
 
 ## Medical History Flags
 ${historyDetails}
-${ragContext}
 
 Please provide your triage assessment as JSON.`;
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

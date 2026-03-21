@@ -170,12 +170,7 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     const latestMarkers = labsWithMarkers[0]?.markers || [];
-
-    // RAG context with 5s timeout — never delays Gemini call if OpenAI is slow
-    const ragContext = await Promise.race([
-      getRagContext(latestMarkers, pet.species || 'dog', openaiApiKey, supabaseUrl, supabaseKey),
-      new Promise<string>(resolve => setTimeout(() => resolve(''), 5000)),
-    ]);
+    const ragContext = '';
 
     const petContext = {
       name: pet.name, species: pet.species, breed: pet.breed, age: pet.age, weight: pet.weight, sex: pet.sex,
@@ -216,7 +211,7 @@ Return this exact structure:
 {"health_score":{"overall":number,"category":"optimal"|"watch"|"elevated","change":number,"summary":"string","breakdown":{"bloodwork":{"score":number,"label":"string"},"weight":{"score":number,"label":"string"},"preventive_care":{"score":number,"label":"string"},"age_conditions":{"score":number,"label":"string"}}},"insights":[{"id":"string","title":"string","description":"string","riskLevel":"low"|"medium"|"high","action":"string","category":"bloodwork"|"weight"|"vaccines"|"conditions"|"preventive"}]}`;
 
     const aiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${geminiApiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
