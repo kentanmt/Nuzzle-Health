@@ -86,35 +86,64 @@ const breedProfiles: Record<string, { predispositions: string; screening: string
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
-  if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
-  try {
-    const body = await req.json();
-    const { petInfo, symptoms, followUps, behavioral, historyFlags } = body;
+  // Parse body before streaming starts (can't await inside the IIFE after returning)
+  let body: any;
+  try { body = await req.json(); } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
-    const GEMINI_API_KEY = (process.env as any).VITE_GEMINI_KEY;
-    if (!GEMINI_API_KEY) return new Response(JSON.stringify({ error: 'Server misconfigured: missing GEMINI key' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  // Return a streaming response immediately so Vercel registers an "initial response"
+  // before Gemini finishes — bypassing the 25s edge timeout on Hobby plan.
+  const { readable, writable } = new TransformStream();
+  const enc = new TextEncoder();
 
-    const breedKey = (petInfo.breed || '').toLowerCase().trim();
-    const breedData = breedProfiles[breedKey] || Object.entries(breedProfiles).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] || null;
+  (async () => {
+    const writer = writable.getWriter();
 
-    const petDetails = [
-      `Species: ${petInfo.species || 'unknown'}`,
-      petInfo.name ? `Name: ${petInfo.name}` : null,
-      petInfo.breed ? `Breed: ${petInfo.breed}` : null,
-      petInfo.age ? `Age: ${petInfo.age}` : null,
-      petInfo.sex ? `Sex: ${petInfo.sex}` : null,
-      petInfo.weight ? `Weight: ${petInfo.weight} lbs` : null,
-      petInfo.existingConditions?.length ? `Existing conditions: ${petInfo.existingConditions.join(', ')}` : null,
-      petInfo.medications?.length ? `Current medications: ${petInfo.medications.join(', ')}` : null,
-    ].filter(Boolean).join('\n');
+    try {
+      const send = async (obj: unknown) => {
+        await writer.write(enc.encode(JSON.stringify(obj)));
+      };
 
-    const symptomList = symptoms.length > 0 ? symptoms.join(', ') : 'None specified';
-    const followUpDetails = followUps.length > 0 ? followUps.map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n') : 'No follow-up details provided';
-    const behavioralNormal = behavioral.length > 0 ? `The following are STILL NORMAL: ${behavioral.join(', ')}` : 'Owner did not confirm any normal behaviors (concerning)';
-    const historyDetails = historyFlags.length > 0 ? historyFlags.join(', ') : 'No relevant history flags';
+      const { petInfo, symptoms, followUps, behavioral, historyFlags } = body;
 
-    const userMessage = `Please assess the following pet case:
+      const GEMINI_API_KEY = (process.env as any).VITE_GEMINI_KEY;
+      if (!GEMINI_API_KEY) { await send({ error: 'Server misconfigured: missing GEMINI key' }); return; }
+
+      const breedKey = (petInfo.breed || '').toLowerCase().trim();
+      const breedData = breedProfiles[breedKey]
+        || Object.entries(breedProfiles).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1]
+        || null;
+
+      const petDetails = [
+        `Species: ${petInfo.species || 'unknown'}`,
+        petInfo.name ? `Name: ${petInfo.name}` : null,
+        petInfo.breed ? `Breed: ${petInfo.breed}` : null,
+        petInfo.age ? `Age: ${petInfo.age}` : null,
+        petInfo.sex ? `Sex: ${petInfo.sex}` : null,
+        petInfo.weight ? `Weight: ${petInfo.weight} lbs` : null,
+        petInfo.existingConditions?.length ? `Existing conditions: ${petInfo.existingConditions.join(', ')}` : null,
+        petInfo.medications?.length ? `Current medications: ${petInfo.medications.join(', ')}` : null,
+      ].filter(Boolean).join('\n');
+
+      const symptomList = symptoms.length > 0 ? symptoms.join(', ') : 'None specified';
+      const followUpDetails = followUps.length > 0
+        ? followUps.map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')
+        : 'No follow-up details provided';
+      const behavioralNormal = behavioral.length > 0
+        ? `The following are STILL NORMAL: ${behavioral.join(', ')}`
+        : 'Owner did not confirm any normal behaviors (concerning)';
+      const historyDetails = historyFlags.length > 0 ? historyFlags.join(', ') : 'No relevant history flags';
+
+      const userMessage = `Please assess the following pet case:
 
 ## Pet Information
 ${petDetails}
@@ -136,35 +165,43 @@ ${historyDetails}
 
 Please provide your triage assessment as JSON.`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-          generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
-        }),
-      },
-    );
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+            generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+          }),
+        },
+      );
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('Gemini error:', response.status, errText);
-      const status = response.status === 429 ? 429 : 500;
-      const msg = response.status === 429 ? 'Rate limit exceeded. Please try again in a moment.' : 'Failed to get AI assessment';
-      return new Response(JSON.stringify({ error: msg }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      if (!geminiRes.ok) {
+        const errText = await geminiRes.text();
+        console.error('Gemini error:', geminiRes.status, errText);
+        const msg = geminiRes.status === 429 ? 'Rate limit exceeded. Please try again in a moment.' : 'Failed to get assessment';
+        await send({ error: msg });
+        return;
+      }
+
+      const data = await geminiRes.json();
+      const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!content) throw new Error('No content in AI response');
+
+      const parsed = JSON.parse(content);
+      await send(parsed);
+    } catch (e: any) {
+      console.error('symptom-checker error:', e);
+      try { await writer.write(enc.encode(JSON.stringify({ error: e.message || 'Unknown error' }))); } catch { /* ignore */ }
+    } finally {
+      try { await writer.close(); } catch { /* already closed */ }
     }
+  })();
 
-    const data = await response.json();
-    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!content) throw new Error('No content in AI response');
-
-    const parsed = JSON.parse(content);
-    return new Response(JSON.stringify(parsed), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-  } catch (e: any) {
-    console.error('symptom-checker error:', e);
-    return new Response(JSON.stringify({ error: e.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-  }
+  return new Response(readable, {
+    status: 200,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
 }

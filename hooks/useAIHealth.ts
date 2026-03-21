@@ -43,8 +43,8 @@ export function useAIHealth(isRealPet: boolean, dataReady: boolean) {
 
   const fetchAIHealth = useCallback(async () => {
     if (!user || !isRealPet || !dataReady || !session?.access_token) return;
-    if (isFetching.current) return; // prevent duplicate calls
-    if (hasFetched.current && data) return; // already have data, don't re-fetch
+    if (isFetching.current) return;
+    if (hasFetched.current && data) return;
 
     isFetching.current = true;
     setLoading(true);
