@@ -102,8 +102,12 @@ export default async function handler(req: Request): Promise<Response> {
     if (!pets || pets.length === 0) return new Response(JSON.stringify({ error: 'No pet found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
     const pet = pets[0];
-    const { data: labs } = await supabase.from('parsed_lab_results').select('*').eq('pet_id', pet.id).order('test_date', { ascending: false });
-    const { data: records } = await supabase.from('pet_records').select('id, title, record_type, record_date, created_at').eq('pet_id', pet.id).order('created_at', { ascending: false });
+
+    // Fetch labs and records in parallel to save ~1-2s
+    const [{ data: labs }, { data: records }] = await Promise.all([
+      supabase.from('parsed_lab_results').select('*').eq('pet_id', pet.id).order('test_date', { ascending: false }),
+      supabase.from('pet_records').select('id, title, record_type, record_date, created_at').eq('pet_id', pet.id).order('created_at', { ascending: false }),
+    ]);
 
     const labsWithMarkers = (labs || []).filter((l: any) => l.markers && (l.markers as any[]).length > 0);
     const rawVaccinations = (labs || []).flatMap((l: any) => (l.vaccinations as any[]) || []);
@@ -166,7 +170,12 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     const latestMarkers = labsWithMarkers[0]?.markers || [];
-    const ragContext = await getRagContext(latestMarkers, pet.species || 'dog', openaiApiKey, supabaseUrl, supabaseKey);
+
+    // RAG context with 5s timeout — never delays Gemini call if OpenAI is slow
+    const ragContext = await Promise.race([
+      getRagContext(latestMarkers, pet.species || 'dog', openaiApiKey, supabaseUrl, supabaseKey),
+      new Promise<string>(resolve => setTimeout(() => resolve(''), 5000)),
+    ]);
 
     const petContext = {
       name: pet.name, species: pet.species, breed: pet.breed, age: pet.age, weight: pet.weight, sex: pet.sex,

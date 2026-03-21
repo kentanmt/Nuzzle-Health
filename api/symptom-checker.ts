@@ -128,7 +128,11 @@ export default async function handler(req: Request): Promise<Response> {
     const supabaseUrl = (process.env as any).VITE_SUPABASE_URL!;
     const supabaseKey = (process.env as any).VITE_SUPABASE_PUBLISHABLE_KEY!;
 
-    const ragContext = await getRagContext(symptoms, petInfo.species || 'dog', OPENAI_API_KEY, supabaseUrl, supabaseKey);
+    // Fetch RAG context with a 5s timeout — never blocks Gemini call
+    const ragContext = await Promise.race([
+      getRagContext(symptoms, petInfo.species || 'dog', OPENAI_API_KEY, supabaseUrl, supabaseKey),
+      new Promise<string>(resolve => setTimeout(() => resolve(''), 5000)),
+    ]);
 
     const breedKey = (petInfo.breed || '').toLowerCase().trim();
     const breedData = breedProfiles[breedKey] || Object.entries(breedProfiles).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] || null;
