@@ -258,8 +258,6 @@ Return ONLY valid JSON:
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
           generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
-          // Disable extended thinking to stay under 25s Vercel Edge timeout
-          thinkingConfig: { thinkingBudget: 0 },
         }),
       },
     );

@@ -145,8 +145,6 @@ Please provide your triage assessment as JSON.`;
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents: [{ role: 'user', parts: [{ text: userMessage }] }],
           generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
-          // Disable extended thinking to stay under 25s Vercel Edge timeout
-          thinkingConfig: { thinkingBudget: 0 },
         }),
       },
     );
