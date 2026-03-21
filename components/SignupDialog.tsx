@@ -7,7 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
-import { ArrowRight, PawPrint, Upload, FileText, Shield, X, Mail } from 'lucide-react';
+import { ArrowRight, PawPrint, Upload, FileText, Shield, X } from 'lucide-react';
 
 export interface TriagePetData {
   name: string;
@@ -30,8 +30,6 @@ interface SignupDialogProps {
 export function SignupDialog({ open, onOpenChange, onSuccess, onSwitchToLogin, petData, contextMessage }: SignupDialogProps) {
   const { signUp } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
-  const [confirmedEmail, setConfirmedEmail] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
@@ -150,46 +148,9 @@ export function SignupDialog({ open, onOpenChange, onSuccess, onSwitchToLogin, p
     }
 
     setLoading(false);
-    // Email confirmation is required — show a friendly check-your-email screen.
-    // When user clicks the link, emailRedirectTo sends them straight to /dashboard.
-    setConfirmedEmail(form.email);
-    setAwaitingConfirmation(true);
+    toast({ title: 'Account created!', description: petData?.name ? `Welcome to Nuzzle — ${petData.name}'s profile is ready! 🐾` : 'Welcome to Nuzzle 🐾' });
+    onSuccess();
   };
-
-  // Email-confirmation waiting screen
-  if (awaitingConfirmation) {
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-md">
-          <div className="flex flex-col items-center text-center gap-5 py-6">
-            <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
-              <Mail className="h-8 w-8 text-primary" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="font-heading text-2xl text-foreground">Check your email</h2>
-              <p className="text-muted-foreground text-sm">
-                We sent a confirmation link to{' '}
-                <span className="font-medium text-foreground">{confirmedEmail}</span>.
-                Click it to activate your account and jump straight to your dashboard.
-              </p>
-            </div>
-            <div className="w-full rounded-xl bg-sage-light/40 border border-primary/20 p-4 text-sm text-muted-foreground space-y-1 text-left">
-              <p className="font-medium text-foreground text-xs uppercase tracking-wider mb-2">What happens next</p>
-              <p>1. Open the email from Nuzzle Health</p>
-              <p>2. Click <span className="font-medium text-foreground">"Confirm your email"</span></p>
-              <p>3. You'll land directly on your dashboard 🐾</p>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Already confirmed?{' '}
-              <button onClick={onSwitchToLogin} className="text-primary font-medium hover:underline">
-                Sign in here
-              </button>
-            </p>
-          </div>
-        </DialogContent>
-      </Dialog>
-    );
-  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
