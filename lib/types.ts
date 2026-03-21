@@ -30,9 +30,10 @@ export interface LabMarker {
   name: string;
   value: number;
   unit: string;
-  referenceMin: number;
-  referenceMax: number;
-  category: 'cbc' | 'kidney' | 'liver' | 'glucose' | 'thyroid' | 'electrolytes' | 'urinalysis';
+  referenceMin: number | null;
+  referenceMax: number | null;
+  status?: 'normal' | 'high' | 'low' | 'critical';
+  category: 'cbc' | 'chemistry' | 'urinalysis' | 'thyroid' | 'other';
 }
 
 export interface VaccinationRecord {

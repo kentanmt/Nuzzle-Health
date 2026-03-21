@@ -158,9 +158,12 @@ export default function DiagnosticsPage() {
                 const markers = latestResult.markers
                   .filter(m => resolveCategory(m.name, m.category) === c.key)
                   .sort((a, b) => {
-                    // Sort out-of-range markers to the top
-                    const aOut = a.value < a.referenceMin || a.value > a.referenceMax;
-                    const bOut = b.value < b.referenceMin || b.value > b.referenceMax;
+                    const aOut = a.referenceMin !== null && a.referenceMax !== null
+                      ? (a.value < a.referenceMin || a.value > a.referenceMax)
+                      : (a.status === 'high' || a.status === 'low' || a.status === 'critical');
+                    const bOut = b.referenceMin !== null && b.referenceMax !== null
+                      ? (b.value < b.referenceMin || b.value > b.referenceMax)
+                      : (b.status === 'high' || b.status === 'low' || b.status === 'critical');
                     if (aOut && !bOut) return -1;
                     if (!aOut && bOut) return 1;
                     return 0;
@@ -176,26 +179,42 @@ export default function DiagnosticsPage() {
                         <div className="rounded-xl border border-border bg-card overflow-hidden">
                           <div className="p-4 border-b border-border bg-secondary/30 flex items-center justify-between">
                             <p className="text-sm font-semibold text-foreground">{c.label} Panel — {markers.length} marker{markers.length !== 1 ? 's' : ''}</p>
-                            {markers.some(m => m.value < m.referenceMin || m.value > m.referenceMax) && (
+                            {markers.some(m =>
+                              m.referenceMin !== null && m.referenceMax !== null
+                                ? (m.value < m.referenceMin || m.value > m.referenceMax)
+                                : (m.status === 'high' || m.status === 'low' || m.status === 'critical')
+                            ) && (
                               <span className="text-[10px] font-semibold text-score-elevated bg-score-elevated/10 rounded-full px-2 py-0.5">
-                                {markers.filter(m => m.value < m.referenceMin || m.value > m.referenceMax).length} out of range
+                                {markers.filter(m =>
+                                  m.referenceMin !== null && m.referenceMax !== null
+                                    ? (m.value < m.referenceMin || m.value > m.referenceMax)
+                                    : (m.status === 'high' || m.status === 'low' || m.status === 'critical')
+                                ).length} out of range
                               </span>
                             )}
                           </div>
                           <div className="divide-y divide-border">
                             {markers.map(marker => {
-                              const range = marker.referenceMax - marker.referenceMin;
-                              const pct = range > 0 ? ((marker.value - marker.referenceMin) / range) * 100 : 50;
-                              const inRange = marker.value >= marker.referenceMin && marker.value <= marker.referenceMax;
-                              const nearEdge = inRange && (pct < 15 || pct > 85);
+                              const hasRef = marker.referenceMin !== null && marker.referenceMax !== null;
+                              const range = hasRef ? marker.referenceMax! - marker.referenceMin! : 0;
+                              const pct = hasRef && range > 0
+                                ? ((marker.value - marker.referenceMin!) / range) * 100
+                                : 50;
+                              // In-range: use ref range if available, fall back to parser status
+                              const inRange = hasRef
+                                ? (marker.value >= marker.referenceMin! && marker.value <= marker.referenceMax!)
+                                : (marker.status !== 'high' && marker.status !== 'low' && marker.status !== 'critical');
+                              const nearEdge = inRange && hasRef && (pct < 15 || pct > 85);
+                              const statusColor = !inRange ? 'text-score-elevated' : nearEdge ? 'text-score-watch' : 'text-score-optimal';
+                              const barColor = !inRange ? 'hsl(var(--score-elevated))' : nearEdge ? 'hsl(var(--score-watch))' : 'hsl(var(--score-optimal))';
                               return (
                                 <div key={marker.name} className="flex items-center justify-between p-4 hover:bg-secondary/20 transition-colors">
                                   <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                       <p className="text-sm font-medium text-foreground">{marker.name}</p>
                                       {!inRange && (
                                         <span className="text-[10px] font-semibold text-score-elevated bg-score-elevated/10 rounded-full px-1.5 py-0.5">
-                                          {marker.value < marker.referenceMin ? '↓ Low' : '↑ High'}
+                                          {marker.status === 'critical' ? '⚠ Critical' : hasRef && marker.value < marker.referenceMin! ? '↓ Low' : '↑ High'}
                                         </span>
                                       )}
                                       {nearEdge && (
@@ -204,21 +223,25 @@ export default function DiagnosticsPage() {
                                         </span>
                                       )}
                                     </div>
-                                    <p className="text-xs text-muted-foreground">Ref: {marker.referenceMin}–{marker.referenceMax} {marker.unit}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {hasRef ? `Ref: ${marker.referenceMin}–${marker.referenceMax} ${marker.unit}` : `No reference range${marker.unit ? ` · ${marker.unit}` : ''}`}
+                                    </p>
                                   </div>
                                   <div className="flex items-center gap-3">
-                                    <div className="hidden sm:block w-28 h-2.5 bg-secondary rounded-full overflow-hidden relative">
-                                      <div
-                                        className="absolute inset-y-0 rounded-full"
-                                        style={{
-                                          left: '0%',
-                                          width: `${Math.min(100, Math.max(2, pct))}%`,
-                                          backgroundColor: inRange ? (nearEdge ? 'hsl(var(--score-watch))' : 'hsl(var(--score-optimal))') : 'hsl(var(--score-elevated))',
-                                        }}
-                                      />
-                                    </div>
+                                    {hasRef && (
+                                      <div className="hidden sm:block w-28 h-2.5 bg-secondary rounded-full overflow-hidden relative">
+                                        <div
+                                          className="absolute inset-y-0 rounded-full"
+                                          style={{
+                                            left: '0%',
+                                            width: `${Math.min(100, Math.max(2, pct))}%`,
+                                            backgroundColor: barColor,
+                                          }}
+                                        />
+                                      </div>
+                                    )}
                                     <div className="text-right min-w-[80px]">
-                                      <p className={`text-sm font-semibold ${inRange ? (nearEdge ? 'text-score-watch' : 'text-score-optimal') : 'text-score-elevated'}`}>
+                                      <p className={`text-sm font-semibold ${statusColor}`}>
                                         {marker.value} {marker.unit}
                                       </p>
                                     </div>

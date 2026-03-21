@@ -608,13 +608,16 @@ export default function Dashboard() {
                   const latest = latestMarkers.find(m => m.name === name);
                   let priority = 0;
                   if (latest) {
-                    const inRange = latest.value >= latest.referenceMin && latest.value <= latest.referenceMax;
+                    const hasRef = latest.referenceMin !== null && latest.referenceMax !== null;
+                    const inRange = hasRef
+                      ? (latest.value >= latest.referenceMin! && latest.value <= latest.referenceMax!)
+                      : (latest.status !== 'high' && latest.status !== 'low' && latest.status !== 'critical');
                     if (!inRange) {
                       priority = 100;
-                    } else {
-                      const range = latest.referenceMax - latest.referenceMin;
+                    } else if (hasRef) {
+                      const range = latest.referenceMax! - latest.referenceMin!;
                       if (range > 0) {
-                        const pct = (latest.value - latest.referenceMin) / range;
+                        const pct = (latest.value - latest.referenceMin!) / range;
                         if (pct < 0.15 || pct > 0.85) priority = 50;
                       }
                     }

@@ -9,7 +9,7 @@ interface MarkerChartProps {
 }
 
 export function MarkerChart({ markerName, results }: MarkerChartProps) {
-  const { data, refMin, refMax, unit, trend, latestValue, change, category } = useMemo(() => {
+  const { data, refMin, refMax, unit, trend, latestValue, change, category, parserStatus } = useMemo(() => {
     const sorted = [...results]
       .filter(r => r.markers.some(m => m.name === markerName))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -24,36 +24,54 @@ export function MarkerChart({ markerName, results }: MarkerChartProps) {
       };
     }).filter(d => d.value !== null);
 
-    const firstMarker = sorted[0]?.markers.find((m) => m.name === markerName);
-    const rMin = firstMarker?.referenceMin ?? 0;
-    const rMax = firstMarker?.referenceMax ?? 100;
+    // Use the most recent marker entry that has reference ranges; fall back to any entry
+    const markerWithRef = sorted
+      .map(r => r.markers.find(m => m.name === markerName))
+      .filter(Boolean)
+      .find(m => m!.referenceMin != null && m!.referenceMax != null);
+    const firstMarker = markerWithRef ?? sorted[0]?.markers.find(m => m.name === markerName);
+
+    const rMin = firstMarker?.referenceMin ?? null;
+    const rMax = firstMarker?.referenceMax ?? null;
     const u = firstMarker?.unit ?? '';
     const cat = firstMarker?.category ?? '';
+    const pStatus = firstMarker?.status;
 
     const latest = mapped.length > 0 ? mapped[mapped.length - 1].value! : 0;
     const prev = mapped.length > 1 ? mapped[mapped.length - 2].value! : latest;
     const ch = latest - prev;
     const t: 'up' | 'down' | 'stable' = ch > 0.5 ? 'up' : ch < -0.5 ? 'down' : 'stable';
 
-    return { data: mapped, refMin: rMin, refMax: rMax, unit: u, trend: t, latestValue: latest, change: ch, category: cat };
+    return { data: mapped, refMin: rMin, refMax: rMax, unit: u, trend: t, latestValue: latest, change: ch, category: cat, parserStatus: pStatus };
   }, [markerName, results]);
 
   if (data.length === 0) return null;
 
-  const isInRange = latestValue >= refMin && latestValue <= refMax;
-  const range = refMax - refMin;
-  const nearEdge = isInRange && range > 0 && (
-    (latestValue - refMin) / range < 0.15 || (latestValue - refMin) / range > 0.85
+  const hasRef = refMin !== null && refMax !== null;
+  // Determine in-range: use ref range if available, else fall back to parser's status flag
+  const isInRange = hasRef
+    ? (latestValue >= refMin! && latestValue <= refMax!)
+    : (parserStatus !== 'high' && parserStatus !== 'low' && parserStatus !== 'critical');
+  const isCritical = parserStatus === 'critical' || (!isInRange && hasRef &&
+    (latestValue < refMin! * 0.7 || latestValue > refMax! * 1.5));
+
+  const range = hasRef ? (refMax! - refMin!) : 0;
+  const nearEdge = isInRange && hasRef && range > 0 && (
+    (latestValue - refMin!) / range < 0.15 || (latestValue - refMin!) / range > 0.85
   );
 
-  const statusColor = !isInRange ? 'text-score-elevated' : nearEdge ? 'text-score-watch' : 'text-score-optimal';
-  const statusBg = !isInRange ? 'bg-score-elevated/10 text-score-elevated' : nearEdge ? 'bg-score-watch/10 text-score-watch' : 'bg-score-optimal/10 text-score-optimal';
-  const statusLabel = !isInRange ? (latestValue < refMin ? '↓ Below Range' : '↑ Above Range') : nearEdge ? '⚡ Near Edge' : '✓ In Range';
+  const statusColor = isCritical ? 'text-score-elevated' : !isInRange ? 'text-score-elevated' : nearEdge ? 'text-score-watch' : 'text-score-optimal';
+  const statusBg = isCritical ? 'bg-score-elevated/10 text-score-elevated' : !isInRange ? 'bg-score-elevated/10 text-score-elevated' : nearEdge ? 'bg-score-watch/10 text-score-watch' : 'bg-score-optimal/10 text-score-optimal';
+  const statusLabel = !isInRange
+    ? (parserStatus === 'critical' ? '⚠ Critical' : hasRef && latestValue < refMin! ? '↓ Below Range' : '↑ Above Range')
+    : nearEdge ? '⚡ Near Edge'
+    : !hasRef ? '— No Ref'
+    : '✓ In Range';
   const strokeColor = !isInRange ? 'hsl(var(--score-elevated))' : nearEdge ? 'hsl(var(--score-watch))' : 'hsl(var(--score-optimal))';
 
   const allValues = data.map(d => d.value!);
-  const minVal = Math.min(...allValues, refMin);
-  const maxVal = Math.max(...allValues, refMax);
+  const minVal = hasRef ? Math.min(...allValues, refMin!) : Math.min(...allValues);
+  const maxVal = hasRef ? Math.max(...allValues, refMax!) : Math.max(...allValues);
   const padding = (maxVal - minVal) * 0.2 || 5;
 
   const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus;
@@ -77,7 +95,7 @@ export function MarkerChart({ markerName, results }: MarkerChartProps) {
             </span>
           </div>
           <p className="text-[10px] text-muted-foreground mt-0.5">
-            Ref: {refMin}–{refMax} {unit}
+            {hasRef ? `Ref: ${refMin}–${refMax} ${unit}` : `No reference range · ${unit || '—'}`}
             {category && category !== 'other' && (
               <span className="ml-1.5 text-muted-foreground/60 capitalize">{category}</span>
             )}
@@ -103,19 +121,21 @@ export function MarkerChart({ markerName, results }: MarkerChartProps) {
       {data.length === 1 ? (
         <div className="mt-3 space-y-2">
           <div className="h-3 bg-secondary rounded-full overflow-hidden relative">
-            {/* Reference zone highlight */}
-            <div
-              className="absolute inset-y-0 bg-score-optimal/20 rounded-full"
-              style={{
-                left: `${Math.max(0, ((refMin - (minVal - padding)) / (maxVal + padding - (minVal - padding))) * 100)}%`,
-                right: `${Math.max(0, 100 - ((refMax - (minVal - padding)) / (maxVal + padding - (minVal - padding))) * 100)}%`,
-              }}
-            />
-            {/* Value marker */}
+            {hasRef && (
+              <div
+                className="absolute inset-y-0 bg-score-optimal/20 rounded-full"
+                style={{
+                  left: `${Math.max(0, ((refMin! - (minVal - padding)) / (maxVal + padding - (minVal - padding))) * 100)}%`,
+                  right: `${Math.max(0, 100 - ((refMax! - (minVal - padding)) / (maxVal + padding - (minVal - padding))) * 100)}%`,
+                }}
+              />
+            )}
             <div
               className="absolute top-0 h-full w-1.5 rounded-full"
               style={{
-                left: `${Math.min(98, Math.max(1, ((latestValue - (minVal - padding)) / (maxVal + padding - (minVal - padding))) * 100))}%`,
+                left: `${hasRef
+                  ? Math.min(98, Math.max(1, ((latestValue - (minVal - padding)) / (maxVal + padding - (minVal - padding))) * 100))
+                  : 50}%`,
                 backgroundColor: strokeColor,
               }}
             />
@@ -128,12 +148,14 @@ export function MarkerChart({ markerName, results }: MarkerChartProps) {
         /* Multi-point chart */
         <ResponsiveContainer width="100%" height={130}>
           <AreaChart data={data} margin={{ top: 8, right: 4, left: -20, bottom: 0 }}>
-            <ReferenceArea
-              y1={refMin}
-              y2={refMax}
-              fill="hsl(var(--score-optimal))"
-              fillOpacity={0.07}
-            />
+            {hasRef && (
+              <ReferenceArea
+                y1={refMin!}
+                y2={refMax!}
+                fill="hsl(var(--score-optimal))"
+                fillOpacity={0.07}
+              />
+            )}
 
             <XAxis
               dataKey="shortDate"
@@ -169,8 +191,8 @@ export function MarkerChart({ markerName, results }: MarkerChartProps) {
               }}
             />
 
-            <ReferenceLine y={refMin} stroke="hsl(var(--border))" strokeDasharray="3 3" strokeWidth={1} />
-            <ReferenceLine y={refMax} stroke="hsl(var(--border))" strokeDasharray="3 3" strokeWidth={1} />
+            {hasRef && <ReferenceLine y={refMin!} stroke="hsl(var(--border))" strokeDasharray="3 3" strokeWidth={1} />}
+            {hasRef && <ReferenceLine y={refMax!} stroke="hsl(var(--border))" strokeDasharray="3 3" strokeWidth={1} />}
 
             <defs>
               <linearGradient id={`grad-${markerName.replace(/\s/g, '-')}`} x1="0" y1="0" x2="0" y2="1">

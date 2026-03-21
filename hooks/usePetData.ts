@@ -3,6 +3,128 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import type { Pet, LabResult, LabMarker, VaccinationRecord, CareRecommendation } from '@/lib/types';
 
+// ---------------------------------------------------------------------------
+// Parsing prompt — comprehensive, handles diverse lab report formats
+// ---------------------------------------------------------------------------
+const PARSE_PROMPT = `You are a veterinary medical record parser. Extract structured data from this document.
+The document may be a CBC panel, chemistry/metabolic panel, urinalysis, thyroid panel, wellness exam, vaccine record, or any combination. Handle output from IDEXX, Antech, Zoetis, in-house analyzers, and handwritten records.
+
+## CRITICAL DEDUPLICATION RULE
+Each unique marker name must appear EXACTLY ONCE in the markers array.
+Many lab reports list the same test on multiple pages or in both a summary table and a detail table — output it ONLY ONCE using the value from the most detailed/prominent results section.
+Common sources of duplicates to watch for: CBC panel listed on page 1 and again on page 2, chemistry values repeated in a results summary, reference ranges listed as separate rows.
+
+## MARKER NAME NORMALIZATION
+Use standard short abbreviations. If the document uses the long form, abbreviate:
+- "Blood Urea Nitrogen" → "BUN"
+- "Alanine Aminotransferase" or "ALT (SGPT)" → "ALT"
+- "Aspartate Aminotransferase" or "AST (SGOT)" → "AST"
+- "Alkaline Phosphatase" → "ALP"
+- "Total Bilirubin" → "Total Bili"
+- "White Blood Cells" or "Total WBC" → "WBC"
+- "Red Blood Cells" → "RBC"
+- "Hemoglobin" → "HGB"
+- "Hematocrit" or "Packed Cell Volume" → "HCT"
+- "Mean Corpuscular Volume" → "MCV"
+- "Mean Corpuscular Hemoglobin" → "MCH"
+- "MCHC (Mean Corpuscular Hemoglobin Concentration)" → "MCHC"
+- "Platelets" or "Thrombocytes" → "Platelets"
+- "Serum Symmetric Dimethylarginine" → "SDMA"
+- "Total Protein" → "Total Protein"
+- "Globulin" → "Globulin"
+- Keep all other standard abbreviations as-is (e.g., ALB, GGT, CHOL, TRIG, Ca, Phos, Na, K, Cl, HCO3, T4)
+
+## MISSING DATA
+If any field is absent from the document, use null. Do NOT invent or estimate values.
+Do NOT use 0 as a default for missing reference ranges — use null.
+
+## REFERENCE RANGES
+Extract only if explicitly shown in the document next to the marker.
+- Format "X - Y" → referenceMin: X, referenceMax: Y
+- Format "> X" → referenceMin: X, referenceMax: null
+- Format "< X" → referenceMin: null, referenceMax: X
+- If completely absent for a marker → referenceMin: null, referenceMax: null
+
+## PATIENT VALUE EXTRACTION
+Extract the actual patient result number, not the reference range value.
+If value is displayed as ">X" or "<X", use the number X as the value.
+Value must be a number — skip any row where you cannot determine a numeric patient value.
+
+## STATUS FLAGS
+Use document flags first: H / HIGH / ↑ / HH → "high", L / LOW / ↓ / LL → "low", critical/danger → "critical", * alone → infer from value vs ref range.
+If no flag: calculate from value vs reference range if both are available.
+If neither flag nor reference range: use "normal".
+
+## CATEGORIES
+- "cbc": WBC, RBC, HGB, HCT, MCV, MCH, MCHC, Platelets, Neutrophils, Lymphocytes, Monocytes, Eosinophils, Basophils, Reticulocytes, Band Neutrophils
+- "chemistry": BUN, Creatinine, SDMA, ALT, AST, ALP, GGT, Albumin, Total Protein, Globulin, Total Bili, Glucose, Fructosamine, Cholesterol, Triglycerides, Calcium, Phosphorus, Sodium, Potassium, Chloride, Bicarbonate, CO2, Anion Gap
+- "thyroid": T4, Free T4, TSH, T3, Free T3
+- "urinalysis": urine pH, Specific Gravity, Urine Protein, Urine Glucose, Ketones, Urine Bilirubin, Urine Blood, Urine WBC, Urine RBC, Urine Casts, UPC ratio
+- "other": everything else
+
+## ADAPTABILITY
+- Vaccine-only records: markers array should be empty []
+- Lab-only records: vaccinations array should be empty []
+- Wellness exams may have both
+- If care recommendations are not present, return []
+
+Return ONLY valid JSON (no markdown, no code blocks, no explanation):
+{"vet_name":string|null,"lab_source":string|null,"test_date":"YYYY-MM-DD"|null,"weight_value":number|null,"weight_unit":"lbs","markers":[{"name":string,"value":number,"unit":string,"referenceMin":number|null,"referenceMax":number|null,"status":"normal"|"high"|"low"|"critical","category":"cbc"|"chemistry"|"urinalysis"|"thyroid"|"other"}],"vaccinations":[{"name":string,"date_administered":"YYYY-MM-DD"|null,"date_due":"YYYY-MM-DD"|null,"lot_number":string|null,"manufacturer":string|null}],"care_recommendations":[{"type":"followup"|"medication"|"screening"|"diet"|"other","title":string,"description":string,"due_date":"YYYY-MM-DD"|null,"priority":"low"|"medium"|"high"}]}`;
+
+// ---------------------------------------------------------------------------
+// Post-parse cleanup: deduplicate by marker name, drop invalid rows
+// ---------------------------------------------------------------------------
+function cleanMarkers(rawMarkers: unknown): any[] {
+  if (!Array.isArray(rawMarkers)) return [];
+
+  const seen = new Map<string, any>();
+
+  for (const m of rawMarkers) {
+    if (!m || typeof m !== 'object') continue;
+    const name = (m as any).name;
+    if (typeof name !== 'string' || !name.trim()) continue;
+
+    const value = Number((m as any).value);
+    if (isNaN(value)) continue; // drop rows where value isn't numeric
+
+    const key = name.trim().toLowerCase();
+
+    if (!seen.has(key)) {
+      seen.set(key, { ...m as any, name: name.trim(), value });
+    } else {
+      // Prefer the entry that has reference ranges over one that doesn't
+      const existing = seen.get(key)!;
+      const existingHasRef = existing.referenceMin != null && existing.referenceMax != null;
+      const newHasRef = (m as any).referenceMin != null && (m as any).referenceMax != null;
+      if (!existingHasRef && newHasRef) {
+        seen.set(key, { ...m as any, name: name.trim(), value });
+      }
+    }
+  }
+
+  return Array.from(seen.values());
+}
+
+// ---------------------------------------------------------------------------
+// Map a raw DB marker to a typed LabMarker, null-safe on reference ranges
+// ---------------------------------------------------------------------------
+function mapMarker(m: any): LabMarker {
+  const refMin = m.referenceMin ?? m.reference_min ?? null;
+  const refMax = m.referenceMax ?? m.reference_max ?? null;
+  return {
+    name: m.name,
+    value: Number(m.value),
+    unit: m.unit || '',
+    referenceMin: refMin !== null ? Number(refMin) : null,
+    referenceMax: refMax !== null ? Number(refMax) : null,
+    status: m.status || undefined,
+    category: m.category || 'other',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
 export function usePetData() {
   const { user, session } = useAuth();
   const [pet, setPet] = useState<Pet | null>(null);
@@ -66,14 +188,8 @@ export function usePetData() {
           labSource: lab.lab_source || 'Unknown',
           weightValue: lab.weight_value ?? null,
           weightUnit: lab.weight_unit || 'lbs',
-          markers: (lab.markers as any[] || []).map((m: any): LabMarker => ({
-            name: m.name,
-            value: Number(m.value),
-            unit: m.unit || '',
-            referenceMin: Number(m.referenceMin || m.reference_min || 0),
-            referenceMax: Number(m.referenceMax || m.reference_max || 100),
-            category: m.category || 'cbc',
-          })),
+          // Deduplicate on read as a safety net for any old data already in DB
+          markers: cleanMarkers(lab.markers).map(mapMarker),
           vaccinations: (lab.vaccinations as any[] || []).map((v: any): VaccinationRecord => ({
             name: v.name,
             dateAdministered: v.date_administered || v.dateAdministered || null,
@@ -125,8 +241,6 @@ export function usePetData() {
     }
     const base64Pdf = btoa(binary);
 
-    const PARSE_PROMPT = `You are a veterinary medical records parser. Extract all structured data from this veterinary document.\nReturn ONLY valid JSON (no markdown, no code blocks):\n{"vet_name":string|null,"lab_source":string|null,"test_date":"YYYY-MM-DD"|null,"weight_value":number|null,"weight_unit":"lbs","markers":[{"name":string,"value":number,"unit":string,"referenceMin":number|null,"referenceMax":number|null,"status":"normal|high|low|critical","category":"cbc|chemistry|urinalysis|thyroid|other"}],"vaccinations":[{"name":string,"date_administered":"YYYY-MM-DD"|null,"date_due":"YYYY-MM-DD"|null,"lot_number":string|null,"manufacturer":string|null}],"care_recommendations":[{"type":"followup|medication|screening|diet|other","title":string,"description":string,"due_date":"YYYY-MM-DD"|null,"priority":"low|medium|high"}]}\nExtract ALL lab markers, vaccinations, and care recommendations. Return only the JSON object.`;
-
     const callGemini = () => fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
       {
@@ -141,7 +255,7 @@ export function usePetData() {
 
     let geminiRes = await callGemini();
     if (geminiRes.status === 429) {
-      await new Promise(r => setTimeout(r, 4000));
+      await new Promise(r => setTimeout(r, 5000));
       geminiRes = await callGemini();
     }
     if (!geminiRes.ok) throw new Error(`Gemini failed: ${geminiRes.status}`);
@@ -151,6 +265,10 @@ export function usePetData() {
     if (!rawContent) throw new Error('No content from Gemini');
 
     const parsed = JSON.parse(rawContent);
+
+    // Deduplicate and validate markers before storing
+    const cleanedMarkers = cleanMarkers(parsed.markers);
+
     await supabase.from('parsed_lab_results').insert({
       pet_record_id: record.id,
       pet_id: record.pet_id,
@@ -158,7 +276,7 @@ export function usePetData() {
       vet_name: parsed.vet_name || null,
       lab_source: parsed.lab_source || null,
       test_date: parsed.test_date || record.record_date || null,
-      markers: parsed.markers || [],
+      markers: cleanedMarkers,
       vaccinations: parsed.vaccinations || [],
       care_recommendations: parsed.care_recommendations || [],
       weight_value: parsed.weight_value || null,
@@ -206,8 +324,7 @@ export function usePetData() {
   // Aggregate all vaccinations from parsed labs, then deduplicate by vaccine type
   // keeping only the MOST RECENT administration per normalized vaccine name
   const rawVaccinations = parsedLabs.flatMap(l => l.vaccinations || []);
-  
-  // Normalize vaccine names to group equivalent vaccines
+
   const normalizeVaxName = (name: string): string => {
     const lower = name.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim();
     if (lower.includes('rabies')) return 'rabies';
@@ -221,7 +338,6 @@ export function usePetData() {
     return lower.replace(/\s+/g, '_');
   };
 
-  // Group by normalized name and keep the most recently administered one
   const vaxByType = new Map<string, typeof rawVaccinations[0]>();
   for (const vax of rawVaccinations) {
     const key = normalizeVaxName(vax.name);
@@ -229,16 +345,12 @@ export function usePetData() {
     if (!existing) {
       vaxByType.set(key, vax);
     } else {
-      // Keep the one with the more recent administration date
       const existingDate = existing.dateAdministered ? new Date(existing.dateAdministered).getTime() : 0;
       const newDate = vax.dateAdministered ? new Date(vax.dateAdministered).getTime() : 0;
-      if (newDate > existingDate) {
-        vaxByType.set(key, vax);
-      }
+      if (newDate > existingDate) vaxByType.set(key, vax);
     }
   }
-  
-  // Recalculate status dynamically based on current date
+
   const now = new Date();
   const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
   const allVaccinations = Array.from(vaxByType.values()).map(vax => {
@@ -253,8 +365,7 @@ export function usePetData() {
   });
 
   const allCareRecommendations = parsedLabs.flatMap(l => l.careRecommendations || []);
-  
-  // Get weight history from parsed labs
+
   const weightHistory = parsedLabs
     .filter(l => l.weightValue != null)
     .map(l => ({ date: l.date, weight: l.weightValue! }))
