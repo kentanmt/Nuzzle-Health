@@ -170,17 +170,44 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     const latestMarkers = labsWithMarkers[0]?.markers || [];
-    const ragContext = '';
+
+    // Cap history to 5 most recent visits to keep payload small
+    const recentLabs = labsWithMarkers.slice(0, 5);
+
+    // Pre-compute per-marker trend summaries instead of sending raw arrays
+    // Format: "MARKER_NAME: [date→value(status), ...] ref:min-max unit | trend:direction"
+    const allMarkerNames = [...new Set(recentLabs.flatMap((l: any) => (l.markers as any[]).map((m: any) => m.name)))];
+    const markerTrends = allMarkerNames.map(name => {
+      const entries = recentLabs
+        .map((l: any) => {
+          const m = (l.markers as any[]).find((x: any) => x.name === name);
+          if (!m) return null;
+          return { date: l.test_date, value: m.value, status: m.status, refMin: m.referenceMin, refMax: m.referenceMax, unit: m.unit };
+        })
+        .filter(Boolean)
+        .reverse(); // oldest first for trend direction
+      if (entries.length === 0) return null;
+      const ref = entries.find((e: any) => e.refMin != null && e.refMax != null);
+      const refStr = ref ? `ref:${ref.refMin}-${ref.refMax}${ref.unit ? ' ' + ref.unit : ''}` : 'ref:unknown';
+      const valStr = entries.map((e: any) => `${e.date}→${e.value}${e.status !== 'normal' ? `(${e.status})` : ''}`).join(', ');
+      const first = entries[0] as any;
+      const last = entries[entries.length - 1] as any;
+      const trend = entries.length > 1
+        ? (last.value > first.value * 1.05 ? 'rising' : last.value < first.value * 0.95 ? 'falling' : 'stable')
+        : 'single';
+      return `${name}: [${valStr}] ${refStr} | trend:${trend}`;
+    }).filter(Boolean);
 
     const petContext = {
       name: pet.name, species: pet.species, breed: pet.breed, age: pet.age, weight: pet.weight, sex: pet.sex,
       spayed_neutered: pet.spayed_neutered, existing_conditions: pet.existing_conditions || [],
       medications: pet.medications || [], allergies: pet.allergies || [],
-      total_records: (records || []).length, total_lab_results: labsWithMarkers.length,
-      latest_lab_date: labsWithMarkers[0]?.test_date || null, latest_markers: latestMarkers,
-      all_markers_history: labsWithMarkers.map((l: any) => ({ date: l.test_date, vet: l.vet_name, markers: l.markers, weight_value: l.weight_value, weight_unit: l.weight_unit })),
-      vaccinations: allVaccinations, care_recommendations: allCareRecs, weight_trend_analysis: weightTrendAnalysis,
-      breed_benchmark: benchmark ? { ideal_weight: benchmark.weight, senior_age: benchmark.senior, life_expectancy: benchmark.lifespan, predispositions: benchmark.predispositions, screening_notes: benchmark.screening } : null,
+      lab_visits: labsWithMarkers.length, latest_lab_date: labsWithMarkers[0]?.test_date || null,
+      marker_trends: markerTrends,
+      vaccinations: allVaccinations.map((v: any) => ({ name: v.name, administered: v.date_administered || v.dateAdministered, due: v.date_due || v.dateDue, status: v.status })),
+      care_recommendations: allCareRecs.slice(0, 10).map((c: any) => ({ title: c.title, priority: c.priority, due: c.due_date })),
+      weight_trend: weightTrendAnalysis,
+      breed_benchmark: benchmark ? { ideal_weight: benchmark.weight, senior_age: benchmark.senior, lifespan: benchmark.lifespan, predispositions: benchmark.predispositions, screening: benchmark.screening } : null,
     };
 
     const systemPrompt = `You are Nuzzle Health Intelligence, an expert veterinary health analyst. Today's date is ${today}.
@@ -189,14 +216,12 @@ Analyze this pet's COMPLETE health history and return a JSON response with TWO s
 1. HEALTH SCORE: A comprehensive health score (0-100) with breakdown across 4 dimensions.
 2. INSIGHTS: 4-6 personalized, actionable insights that leverage longitudinal trends.
 
-## LONGITUDINAL ANALYSIS (critical — use all_markers_history, not just latest values)
-When multiple lab visits are available:
-- Compare each key marker across visits. Note direction: improving, stable, or worsening.
-- A marker trending toward the edge of its range (even if still "normal") is clinically significant.
-- A previously out-of-range marker that has normalized is a positive insight worth noting.
-- Flag any marker that has consistently worsened over 2+ visits — even if still technically in range.
-- Provide insights that reference specific dates and values (e.g. "BUN rose from 18 to 26 between Jan and Mar").
-- Weight trends over time are important: gradual gain or loss has different significance than a single snapshot.
+## LONGITUDINAL ANALYSIS (use marker_trends, not raw arrays)
+marker_trends is a pre-computed list: "NAME: [date→value(status), ...] ref:min-max unit | trend:direction"
+- Use trend direction (rising/falling/stable) to flag concerning or improving trajectories.
+- A rising trend toward the top of range is clinically significant even if still normal.
+- A previously abnormal (high/low) marker now normal = positive insight.
+- Reference specific dates and values in your insights (e.g. "BUN rose from 18→26 Jan–Mar").
 
 ## SCORING RULES
 - Bloodwork (0-100): Start at 95. Each out-of-range marker: -5 to -15 based on severity. Worsening trend even in range: -3 to -8. Improving trend: +2 to +5 bonus.
@@ -213,16 +238,15 @@ When multiple lab visits are available:
 
     const labCount = labsWithMarkers.length;
     const longitudinalNote = labCount > 1
-      ? `This pet has ${labCount} lab visits. You MUST perform longitudinal analysis — compare marker values across all visits in all_markers_history and identify trends (improving, stable, worsening). Reference specific dates and values in your insights.`
-      : `This pet has only 1 lab visit. Analyze current values against reference ranges and breed predispositions. Note in one insight that uploading future labs will enable trend tracking.`;
+      ? `${labCount} lab visits available. Use marker_trends for longitudinal analysis — identify rising/falling trajectories and flag anything clinically relevant.`
+      : `1 lab visit. Analyze current values vs ref ranges and breed predispositions.`;
 
-    const userPrompt = `Analyze this pet's complete health history and return ONLY valid JSON (no markdown).
+    // Compact JSON (no indentation) to minimize token count and latency
+    const userPrompt = `${longitudinalNote}
 
-${longitudinalNote}
+${JSON.stringify(petContext)}
 
-${JSON.stringify(petContext, null, 2)}
-
-Return this exact structure:
+Return ONLY valid JSON:
 {"health_score":{"overall":number,"category":"optimal"|"watch"|"elevated","change":number,"summary":"string","breakdown":{"bloodwork":{"score":number,"label":"string"},"weight":{"score":number,"label":"string"},"preventive_care":{"score":number,"label":"string"},"age_conditions":{"score":number,"label":"string"}}},"insights":[{"id":"string","title":"string","description":"string","riskLevel":"low"|"medium"|"high","action":"string","category":"bloodwork"|"weight"|"vaccines"|"conditions"|"preventive"}]}`;
 
     const aiResponse = await fetch(
@@ -234,6 +258,8 @@ Return this exact structure:
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
           generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+          // Disable extended thinking to stay under 25s Vercel Edge timeout
+          thinkingConfig: { thinkingBudget: 0 },
         }),
       },
     );
