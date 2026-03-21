@@ -81,7 +81,10 @@ serve(async (req) => {
     const token = authHeader.slice(7);
     let userId: string;
     try {
-      const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      const pad = b64.length % 4;
+      const padded = pad ? b64 + "=".repeat(4 - pad) : b64;
+      const payload = JSON.parse(atob(padded));
       userId = payload.sub;
       if (!userId) throw new Error("No sub");
     } catch {
