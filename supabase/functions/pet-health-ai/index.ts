@@ -24,12 +24,12 @@ async function getRagContext(
     const query = `${species} lab markers: ${queryTerms} interpretation reference ranges clinical significance`;
 
     const embeddingRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${geminiApiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key=${geminiApiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "models/text-embedding-004",
+          model: "models/embedding-001",
           content: { parts: [{ text: query }] },
         }),
       }

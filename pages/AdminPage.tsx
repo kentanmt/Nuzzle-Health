@@ -107,8 +107,8 @@ export default function AdminPage() {
       const errors: string[] = [];
       for (const chunk of CHUNKS) {
         const embRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${GEMINI_KEY}`,
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'models/text-embedding-004', content: { parts: [{ text: chunk.content }] } }) }
+          `https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key=${GEMINI_KEY}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'models/embedding-001', content: { parts: [{ text: chunk.content }] } }) }
         );
         if (!embRes.ok) { errors.push(`Embed failed: ${await embRes.text()}`); continue; }
         const embData = await embRes.json();
