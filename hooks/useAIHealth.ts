@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 
 export interface AIHealthBreakdownItem {
@@ -52,13 +51,20 @@ export function useAIHealth(isRealPet: boolean, dataReady: boolean) {
     setError(null);
 
     try {
-      const { data: fnData, error: fnError } = await supabase.functions.invoke('pet-health-ai', {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+      const response = await fetch('/api/pet-health-ai', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
       });
 
-      if (fnError) {
-        console.error('AI health error:', fnError);
-        setError(fnError.message);
+      const fnData = await response.json();
+
+      if (!response.ok) {
+        const msg = fnData?.error || `HTTP ${response.status}`;
+        console.error('AI health error:', msg);
+        setError(msg);
         return;
       }
 

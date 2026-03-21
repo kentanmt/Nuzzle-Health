@@ -106,65 +106,24 @@ export function usePetData() {
     fetchData();
   }, [fetchData]);
 
-  // Parse a single PDF record directly in the browser (no edge function needed)
+  // Parse a single PDF record via Vercel API route (secure — API key stays server-side)
   const parsePdfRecord = useCallback(async (record: any) => {
-    const geminiKey = import.meta.env.VITE_GEMINI_KEY;
-    if (!geminiKey) { console.error('VITE_GEMINI_KEY not set'); return; }
+    if (!session?.access_token) throw new Error('Not authenticated');
 
-    // Download file from Supabase storage
-    const { data: fileData, error: fileError } = await supabase.storage
-      .from('pet-records')
-      .download(record.file_url);
-    if (fileError || !fileData) throw new Error(`Download failed: ${fileError?.message}`);
-
-    // Convert to base64
-    const buffer = await fileData.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const base64Pdf = btoa(binary);
-
-    const PARSE_PROMPT = `You are a veterinary medical records parser. Extract all structured data from this veterinary document.
-Return ONLY valid JSON (no markdown, no code blocks):
-{"vet_name":string|null,"lab_source":string|null,"test_date":"YYYY-MM-DD"|null,"weight_value":number|null,"weight_unit":"lbs","markers":[{"name":string,"value":number,"unit":string,"referenceMin":number|null,"referenceMax":number|null,"status":"normal|high|low|critical","category":"cbc|chemistry|urinalysis|thyroid|other"}],"vaccinations":[{"name":string,"date_administered":"YYYY-MM-DD"|null,"date_due":"YYYY-MM-DD"|null,"lot_number":string|null,"manufacturer":string|null}],"care_recommendations":[{"type":"followup|medication|screening|diet|other","title":string,"description":string,"due_date":"YYYY-MM-DD"|null,"priority":"low|medium|high"}]}
-Rules: Extract ALL lab markers with numeric values and reference ranges. Convert weight to lbs. Include all vaccinations. Return only the JSON object.`;
-
-    // Call Gemini with PDF inline — retry once on 429
-    const callGemini = async () => fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ inlineData: { mimeType: 'application/pdf', data: base64Pdf } }, { text: PARSE_PROMPT }] }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json' } }) }
-    );
-
-    let geminiRes = await callGemini();
-    if (geminiRes.status === 429) {
-      await new Promise(r => setTimeout(r, 4000));
-      geminiRes = await callGemini();
-    }
-    if (!geminiRes.ok) throw new Error(`Gemini failed: ${geminiRes.status}`);
-
-    const geminiData = await geminiRes.json();
-    const rawContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!rawContent) throw new Error('No content from Gemini');
-
-    const parsed = JSON.parse(rawContent);
-    const testDate = parsed.test_date || record.record_date || null;
-
-    await supabase.from('parsed_lab_results').insert({
-      pet_record_id: record.id,
-      pet_id: record.pet_id,
-      user_id: record.user_id,
-      vet_name: parsed.vet_name || null,
-      lab_source: parsed.lab_source || null,
-      test_date: testDate,
-      markers: parsed.markers || [],
-      vaccinations: parsed.vaccinations || [],
-      care_recommendations: parsed.care_recommendations || [],
-      weight_value: parsed.weight_value || null,
-      weight_unit: parsed.weight_unit || 'lbs',
-      raw_text: rawContent,
+    const response = await fetch('/api/parse-pdf', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ record }),
     });
-  }, []);
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error(err.error || `parse-pdf failed: ${response.status}`);
+    }
+  }, [session]);
 
   // Trigger PDF parsing for unprocessed records
   const parseUnprocessedRecords = useCallback(async () => {

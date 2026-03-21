@@ -299,19 +299,22 @@ export default function TriagePage() {
     setStep('loading');
     setIsAnalyzing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('symptom-checker', {
-        body: {
+      const response = await fetch('/api/symptom-checker', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           petInfo: state.petInfo,
           symptoms: state.symptoms,
           followUps: state.followUps,
           behavioral: state.behavioral,
           historyFlags: state.historyFlags,
-        },
+        }),
       });
 
-      if (error) throw error;
-      if (data?.error) {
-        toast({ title: 'Assessment Error', description: data.error, variant: 'destructive' });
+      const data = await response.json();
+
+      if (!response.ok || data?.error) {
+        toast({ title: 'Assessment Error', description: data?.error || 'Could not complete assessment', variant: 'destructive' });
         setStep('history');
         return;
       }
