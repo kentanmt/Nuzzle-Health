@@ -134,7 +134,7 @@ export function VideoHero({ onDashboardClick }: VideoHeroProps) {
           >
             {[
               { stat: 'Health Intelligence', label: 'Personalized insights for your pet' },
-              { stat: 'Lower Costs', label: 'Earn credits on wellness visits' },
+              { stat: 'Fewer ER Trips', label: 'Avoid unnecessary emergency vet visits' },
               { stat: 'Instant Triage', label: 'Symptom checks in seconds' },
             ].map((item) => (
               <div key={item.stat}>

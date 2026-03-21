@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,7 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
-import { ArrowRight, PawPrint, Upload, FileText, Shield, X } from 'lucide-react';
+import { ArrowRight, PawPrint } from 'lucide-react';
 
 export interface TriagePetData {
   name: string;
@@ -30,8 +30,6 @@ interface SignupDialogProps {
 export function SignupDialog({ open, onOpenChange, onSuccess, onSwitchToLogin, petData, contextMessage }: SignupDialogProps) {
   const { signUp } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -41,20 +39,6 @@ export function SignupDialog({ open, onOpenChange, onSuccess, onSwitchToLogin, p
     password: '',
     joinWaitlist: true,
   });
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.type !== 'application/pdf') {
-      toast({ title: 'Please select a PDF file', variant: 'destructive' });
-      return;
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      toast({ title: 'File too large', description: 'Max 20MB', variant: 'destructive' });
-      return;
-    }
-    setSelectedFile(file);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,9 +74,8 @@ export function SignupDialog({ open, onOpenChange, onSuccess, onSwitchToLogin, p
       }).eq('user_id', user.id);
 
       // Auto-create pet from triage data if available
-      let petId: string | null = null;
       if (petData?.name) {
-        const { data: newPet } = await supabase.from('pets').insert({
+        await supabase.from('pets').insert({
           user_id: user.id,
           name: petData.name,
           species: petData.species || 'dog',
@@ -100,33 +83,7 @@ export function SignupDialog({ open, onOpenChange, onSuccess, onSwitchToLogin, p
           age: petData.age ? parseFloat(petData.age) : null,
           sex: petData.sex || null,
           weight: petData.weight ? parseFloat(petData.weight) : null,
-        }).select('id').single();
-        petId = newPet?.id ?? null;
-      }
-
-      // Upload PDF if selected
-      if (selectedFile && petId) {
-        try {
-          const filePath = `${user.id}/${petId}/${Date.now()}-${selectedFile.name}`;
-          const { error: uploadError } = await supabase.storage
-            .from('pet-records')
-            .upload(filePath, selectedFile);
-
-          if (!uploadError) {
-            await supabase.from('pet_records').insert({
-              pet_id: petId,
-              user_id: user.id,
-              title: selectedFile.name.replace('.pdf', ''),
-              file_name: selectedFile.name,
-              file_url: filePath,
-              record_type: 'lab-report',
-              record_date: new Date().toISOString().split('T')[0],
-            });
-            // Parsing will be triggered automatically by usePetData hook
-          }
-        } catch (err) {
-          console.error('PDF upload during signup failed:', err);
-        }
+        });
       }
     }
 
@@ -211,50 +168,6 @@ export function SignupDialog({ open, onOpenChange, onSuccess, onSwitchToLogin, p
             <Input id="password" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="Min 6 characters" required minLength={6} maxLength={128} />
           </div>
 
-          {/* Bloodwork PDF Upload */}
-          <div className="rounded-xl border border-primary/20 bg-sage-light/30 p-4 space-y-3">
-            <div className="flex items-start gap-2">
-              <Upload className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-foreground">Upload latest bloodwork (optional)</p>
-                <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">
-                  Upload a PDF of your pet's most recent lab results and we'll automatically generate a personalized health score, biomarker trends, and actionable insights.
-                </p>
-              </div>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            {selectedFile ? (
-              <div className="flex items-center gap-2 rounded-lg bg-card px-3 py-2 text-sm border border-border">
-                <FileText className="h-4 w-4 text-primary flex-shrink-0" />
-                <span className="truncate flex-1 text-foreground">{selectedFile.name}</span>
-                <button
-                  type="button"
-                  onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
-                  className="text-muted-foreground hover:text-score-elevated transition-colors"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full border-2 border-dashed border-primary/30 rounded-lg py-3 text-center cursor-pointer hover:border-primary/60 hover:bg-sage-light/50 transition-colors"
-              >
-                <p className="text-xs text-primary font-medium">Click to select a PDF</p>
-              </button>
-            )}
-            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-              <Shield className="h-3 w-3 flex-shrink-0" />
-              <span>Your data is encrypted and stored securely. We never share your pet's medical records with third parties.</span>
-            </div>
-          </div>
 
           <div className="flex items-start gap-3 rounded-xl bg-sage-light/50 p-3">
             <Checkbox
