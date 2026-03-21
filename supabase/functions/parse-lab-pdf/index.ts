@@ -85,10 +85,9 @@ serve(async (req) => {
     const { pet_record_id } = await req.json();
     if (!pet_record_id) throw new Error("pet_record_id is required");
 
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData } = await supabaseUser.auth.getClaims(token);
-    const userId = claimsData?.claims?.sub;
-    if (!userId) throw new Error("Unauthorized");
+    const { data: { user: authUser }, error: authErr } = await supabaseUser.auth.getUser();
+    if (authErr || !authUser) throw new Error("Unauthorized");
+    const userId = authUser.id;
 
     // Get the record
     const { data: record, error: recordError } = await supabaseService
