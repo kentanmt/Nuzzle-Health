@@ -62,7 +62,9 @@ export default function AdminPage() {
 
   const handleSeedKnowledge = async () => {
     setSeeding(true);
-    setSeedResult('Seeding… this takes ~60 seconds');
+    setSeedResult('Coming soon — RAG knowledge base requires upgraded API access.');
+    setSeeding(false);
+    return;
     const GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY;
     if (!GEMINI_KEY) { setSeedResult('✗ VITE_GEMINI_KEY not set in Vercel env vars'); setSeeding(false); return; }
 
