@@ -250,6 +250,19 @@ marker_trends format: "NAME: [date→value(status), ...] ref:min-max unit | tren
       rawContent = rawContent.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
 
       const parsed = JSON.parse(rawContent);
+
+      // Persist health score for longitudinal tracking (fire-and-forget)
+      supabase.from('pet_health_scores').insert({
+        pet_id: pet.id,
+        user_id: pet.user_id,
+        overall_score: parsed.health_score?.overall ?? null,
+        category: parsed.health_score?.category ?? null,
+        change_from_previous: parsed.health_score?.change ?? null,
+        breakdown: parsed.health_score?.breakdown ?? null,
+        insights: parsed.insights ?? null,
+        lab_visit_count: labsWithMarkers.length,
+      }).then(({ error }: any) => { if (error) console.error('health score save error:', error); });
+
       await send(parsed);
     } catch (err: any) {
       console.error('pet-health-ai error:', err);

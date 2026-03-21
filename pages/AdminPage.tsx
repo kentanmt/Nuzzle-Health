@@ -26,6 +26,7 @@ interface WaitlistRow {
 }
 
 interface Stats {
+  // Waitlist
   totalWaitlist: number;
   totalProfiles: number;
   totalPets: number;
@@ -33,6 +34,20 @@ interface Stats {
   speciesBreakdown: { name: string; value: number }[];
   sourceBreakdown: { name: string; value: number }[];
   signupsByDay: { date: string; count: number }[];
+  // Triage
+  totalTriageSessions: number;
+  triageUrgencyBreakdown: { name: string; value: number }[];
+  triageBySpecies: { name: string; value: number }[];
+  topSymptoms: { name: string; count: number }[];
+  recentTriageSessions: any[];
+  // Biomarkers
+  topAbnormalMarkers: { name: string; count: number }[];
+  markerStatusBreakdown: { name: string; value: number }[];
+  // Health scores
+  totalHealthScores: number;
+  avgHealthScore: number;
+  healthScoreCategoryBreakdown: { name: string; value: number }[];
+  healthScoresByDay: { date: string; avg: number; count: number }[];
 }
 
 function StatCard({ icon: Icon, label, value, sub }: { icon: any; label: string; value: number | string; sub?: string }) {
@@ -229,50 +244,99 @@ export default function AdminPage() {
 
   async function fetchStats() {
     setFetching(true);
-    const [waitlistRes, profilesRes, petsRes] = await Promise.all([
+
+    const today = new Date();
+    const buildDayMap = (days = 14) => {
+      const m: Record<string, number> = {};
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(today); d.setDate(d.getDate() - i);
+        m[d.toISOString().slice(0, 10)] = 0;
+      }
+      return m;
+    };
+
+    const [waitlistRes, profilesRes, petsRes, triageRes, labResultsRes, healthScoresRes] = await Promise.all([
       supabase.from('waitlist_signups' as any).select('*').order('created_at', { ascending: false }),
       supabase.from('profiles').select('id', { count: 'exact', head: true }),
       supabase.from('pets').select('id', { count: 'exact', head: true }),
+      supabase.from('triage_sessions' as any).select('*').order('created_at', { ascending: false }),
+      supabase.from('parsed_lab_results').select('markers, test_date, pet_id'),
+      supabase.from('pet_health_scores' as any).select('*').order('generated_at', { ascending: false }),
     ]);
 
     if (waitlistRes.error) console.error('waitlist query error:', waitlistRes.error);
-    console.log('waitlist rows returned:', waitlistRes.data?.length ?? 0);
     const waitlist: WaitlistRow[] = (waitlistRes.data as WaitlistRow[]) ?? [];
+    const triageSessions: any[] = (triageRes.data as any[]) ?? [];
+    const labResults: any[] = (labResultsRes.data as any[]) ?? [];
+    const healthScores: any[] = (healthScoresRes.data as any[]) ?? [];
 
-    // Species breakdown
+    // ── Waitlist ──────────────────────────────────────────
     const speciesMap: Record<string, number> = {};
-    waitlist.forEach(w => {
-      const s = w.species ?? 'Unknown';
-      speciesMap[s] = (speciesMap[s] ?? 0) + 1;
-    });
-    const speciesBreakdown = Object.entries(speciesMap).map(([name, value]) => ({ name, value }));
+    waitlist.forEach(w => { const s = w.species ?? 'Unknown'; speciesMap[s] = (speciesMap[s] ?? 0) + 1; });
 
-    // UTM source breakdown
     const sourceMap: Record<string, number> = {};
-    waitlist.forEach(w => {
-      const s = w.utm_source ?? 'Direct';
-      sourceMap[s] = (sourceMap[s] ?? 0) + 1;
-    });
-    const sourceBreakdown = Object.entries(sourceMap)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([name, value]) => ({ name, value }));
+    waitlist.forEach(w => { const s = w.utm_source ?? 'Direct'; sourceMap[s] = (sourceMap[s] ?? 0) + 1; });
 
-    // Signups by day (last 14 days)
-    const dayMap: Record<string, number> = {};
-    const today = new Date();
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      dayMap[d.toISOString().slice(0, 10)] = 0;
-    }
-    waitlist.forEach(w => {
-      const day = w.created_at?.slice(0, 10);
-      if (day && dayMap[day] !== undefined) dayMap[day]++;
+    const signupDayMap = buildDayMap(14);
+    waitlist.forEach(w => { const d = w.created_at?.slice(0, 10); if (d && signupDayMap[d] !== undefined) signupDayMap[d]++; });
+
+    // ── Triage ────────────────────────────────────────────
+    const urgencyMap: Record<string, number> = {};
+    triageSessions.forEach(s => { const l = s.urgency_level ?? 'unknown'; urgencyMap[l] = (urgencyMap[l] ?? 0) + 1; });
+
+    const triageSpeciesMap: Record<string, number> = {};
+    triageSessions.forEach(s => { const sp = s.species ?? 'unknown'; triageSpeciesMap[sp] = (triageSpeciesMap[sp] ?? 0) + 1; });
+
+    const symptomCountMap: Record<string, number> = {};
+    triageSessions.forEach(s => {
+      const syms: string[] = Array.isArray(s.symptoms) ? s.symptoms : [];
+      syms.forEach((sym: string) => { symptomCountMap[sym] = (symptomCountMap[sym] ?? 0) + 1; });
     });
-    const signupsByDay = Object.entries(dayMap).map(([date, count]) => ({
-      date: date.slice(5), // MM-DD
-      count,
+    const topSymptoms = Object.entries(symptomCountMap)
+      .sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([name, count]) => ({ name, count }));
+
+    // ── Biomarkers ────────────────────────────────────────
+    const abnormalMarkerMap: Record<string, number> = {};
+    const statusMap: Record<string, number> = { normal: 0, high: 0, low: 0, critical: 0 };
+    labResults.forEach(lr => {
+      const markers: any[] = Array.isArray(lr.markers) ? lr.markers : [];
+      markers.forEach((m: any) => {
+        if (m.status && m.status !== 'normal') {
+          abnormalMarkerMap[m.name] = (abnormalMarkerMap[m.name] ?? 0) + 1;
+          if (statusMap[m.status] !== undefined) statusMap[m.status]++;
+          else statusMap.critical++;
+        } else {
+          statusMap.normal = (statusMap.normal ?? 0) + 1;
+        }
+      });
+    });
+    const topAbnormalMarkers = Object.entries(abnormalMarkerMap)
+      .sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([name, count]) => ({ name, count }));
+    const markerStatusBreakdown = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
+
+    // ── Health Scores ─────────────────────────────────────
+    const validScores = healthScores.filter(s => s.overall_score != null);
+    const avgHealthScore = validScores.length
+      ? Math.round(validScores.reduce((sum, s) => sum + s.overall_score, 0) / validScores.length)
+      : 0;
+
+    const categoryMap: Record<string, number> = {};
+    healthScores.forEach(s => { const c = s.category ?? 'unknown'; categoryMap[c] = (categoryMap[c] ?? 0) + 1; });
+
+    const scoreDayMap = buildDayMap(14);
+    const scoreDayCount: Record<string, number> = {};
+    const scoreDaySum: Record<string, number> = {};
+    Object.keys(scoreDayMap).forEach(k => { scoreDayCount[k] = 0; scoreDaySum[k] = 0; });
+    validScores.forEach(s => {
+      const d = (s.generated_at ?? '').slice(0, 10);
+      if (scoreDayCount[d] !== undefined) { scoreDayCount[d]++; scoreDaySum[d] += s.overall_score; }
+    });
+    const healthScoresByDay = Object.keys(scoreDayMap).map(date => ({
+      date: date.slice(5),
+      avg: scoreDayCount[date] > 0 ? Math.round(scoreDaySum[date] / scoreDayCount[date]) : 0,
+      count: scoreDayCount[date],
     }));
 
     setStats({
@@ -280,9 +344,20 @@ export default function AdminPage() {
       totalProfiles: profilesRes.count ?? 0,
       totalPets: petsRes.count ?? 0,
       recentSignups: waitlist.slice(0, 20),
-      speciesBreakdown,
-      sourceBreakdown,
-      signupsByDay,
+      speciesBreakdown: Object.entries(speciesMap).map(([name, value]) => ({ name, value })),
+      sourceBreakdown: Object.entries(sourceMap).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, value]) => ({ name, value })),
+      signupsByDay: Object.entries(signupDayMap).map(([date, count]) => ({ date: date.slice(5), count })),
+      totalTriageSessions: triageSessions.length,
+      triageUrgencyBreakdown: Object.entries(urgencyMap).map(([name, value]) => ({ name, value })),
+      triageBySpecies: Object.entries(triageSpeciesMap).map(([name, value]) => ({ name, value })),
+      topSymptoms,
+      recentTriageSessions: triageSessions.slice(0, 10),
+      topAbnormalMarkers,
+      markerStatusBreakdown,
+      totalHealthScores: healthScores.length,
+      avgHealthScore,
+      healthScoreCategoryBreakdown: Object.entries(categoryMap).map(([name, value]) => ({ name, value })),
+      healthScoresByDay,
     });
     setFetching(false);
   }
@@ -455,6 +530,261 @@ export default function AdminPage() {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            {/* ── TRIAGE ANALYTICS ─────────────────────────────────── */}
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-foreground">Symptom Checker Analytics</h2>
+              <p className="text-xs text-muted-foreground">Every triage session — including anonymous users</p>
+            </div>
+
+            {/* Triage stat cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <StatCard icon={ClipboardList} label="Total Sessions" value={stats.totalTriageSessions} sub="All time" />
+              <StatCard
+                icon={TrendingUp}
+                label="Emergency / Urgent"
+                value={
+                  (stats.triageUrgencyBreakdown.find(u => u.name === 'emergency')?.value ?? 0) +
+                  (stats.triageUrgencyBreakdown.find(u => u.name === 'urgent')?.value ?? 0)
+                }
+                sub="High-acuity cases"
+              />
+              <StatCard
+                icon={PawPrint}
+                label="Dogs vs Cats"
+                value={`${stats.triageBySpecies.find(s => s.name === 'dog')?.value ?? 0} / ${stats.triageBySpecies.find(s => s.name === 'cat')?.value ?? 0}`}
+                sub="Dogs / Cats"
+              />
+              <StatCard
+                icon={Users}
+                label="Unique Symptoms"
+                value={stats.topSymptoms.length}
+                sub="Distinct reported symptoms"
+              />
+            </div>
+
+            {/* Urgency breakdown + top symptoms */}
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+                <h3 className="text-sm font-semibold text-foreground">Urgency Breakdown</h3>
+                {stats.triageUrgencyBreakdown.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie
+                        data={stats.triageUrgencyBreakdown}
+                        cx="50%" cy="50%"
+                        innerRadius={50} outerRadius={80}
+                        dataKey="value"
+                        label={({ name, value }) => `${name} (${value})`}
+                        labelLine={false}
+                      >
+                        {stats.triageUrgencyBreakdown.map((entry, i) => {
+                          const urgencyColors: Record<string, string> = {
+                            emergency: '#dc2626',
+                            urgent: '#ea580c',
+                            'monitor-at-home': '#16a34a',
+                            routine: '#2563eb',
+                          };
+                          return <Cell key={i} fill={urgencyColors[entry.name] ?? COLORS[i % COLORS.length]} />;
+                        })}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-sm text-muted-foreground pt-4">No triage sessions yet</p>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+                <h3 className="text-sm font-semibold text-foreground">Top Reported Symptoms</h3>
+                {stats.topSymptoms.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={stats.topSymptoms.slice(0, 8)} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={90} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-sm text-muted-foreground pt-4">No symptom data yet</p>
+                )}
+              </div>
+            </div>
+
+            {/* Recent triage sessions table */}
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+              <div className="px-5 py-4 border-b border-border">
+                <h3 className="text-sm font-semibold text-foreground">Recent Triage Sessions</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      {['Date', 'Pet', 'Species', 'Breed', 'Age', 'Symptoms', 'Urgency', 'Zip', 'User'].map(h => (
+                        <th key={h} className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {stats.recentTriageSessions.map((row: any) => (
+                      <tr key={row.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">{new Date(row.created_at).toLocaleDateString()}</td>
+                        <td className="px-4 py-2.5 font-medium">{row.pet_name ?? '—'}</td>
+                        <td className="px-4 py-2.5 capitalize">{row.species ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{row.breed ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{row.age ? `${row.age} yrs` : '—'}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground max-w-[160px] truncate">
+                          {Array.isArray(row.symptoms) ? row.symptoms.slice(0, 3).join(', ') + (row.symptoms.length > 3 ? `…+${row.symptoms.length - 3}` : '') : '—'}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                            row.urgency_level === 'emergency' ? 'bg-red-100 text-red-700' :
+                            row.urgency_level === 'urgent' ? 'bg-orange-100 text-orange-700' :
+                            row.urgency_level === 'monitor-at-home' ? 'bg-green-100 text-green-700' :
+                            'bg-blue-100 text-blue-700'
+                          }`}>
+                            {row.urgency_level ?? '—'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{row.zip_code ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground text-xs">{row.user_id ? 'Logged in' : 'Anonymous'}</td>
+                      </tr>
+                    ))}
+                    {stats.recentTriageSessions.length === 0 && (
+                      <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No triage sessions yet</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* ── BIOMARKER ANALYTICS ───────────────────────────────── */}
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-foreground">Biomarker Analytics</h2>
+              <p className="text-xs text-muted-foreground">Aggregated from all uploaded lab reports</p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Top abnormal markers */}
+              <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+                <h3 className="text-sm font-semibold text-foreground">Most Common Abnormal Markers</h3>
+                {stats.topAbnormalMarkers.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={stats.topAbnormalMarkers.slice(0, 8)} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={80} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#ea580c" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-sm text-muted-foreground pt-4">No lab data yet</p>
+                )}
+              </div>
+
+              {/* Marker status breakdown */}
+              <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+                <h3 className="text-sm font-semibold text-foreground">Marker Status Distribution</h3>
+                {stats.markerStatusBreakdown.some(m => m.value > 0) ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie
+                        data={stats.markerStatusBreakdown.filter(m => m.value > 0)}
+                        cx="50%" cy="50%"
+                        innerRadius={50} outerRadius={80}
+                        dataKey="value"
+                        label={({ name, value }) => `${name} (${value})`}
+                        labelLine={false}
+                      >
+                        {stats.markerStatusBreakdown.map((entry, i) => {
+                          const statusColors: Record<string, string> = { normal: '#16a34a', high: '#ea580c', low: '#2563eb', critical: '#dc2626' };
+                          return <Cell key={i} fill={statusColors[entry.name] ?? COLORS[i % COLORS.length]} />;
+                        })}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-sm text-muted-foreground pt-4">No lab data yet</p>
+                )}
+              </div>
+            </div>
+
+            {/* ── HEALTH SCORE ANALYTICS ────────────────────────────── */}
+            <div className="space-y-1">
+              <h2 className="text-base font-semibold text-foreground">AI Health Score Analytics</h2>
+              <p className="text-xs text-muted-foreground">Gemini-generated scores stored per generation</p>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <StatCard icon={TrendingUp} label="Total Scores Generated" value={stats.totalHealthScores} sub="All time" />
+              <StatCard icon={ClipboardList} label="Avg Health Score" value={stats.avgHealthScore || '—'} sub="Out of 100" />
+              <StatCard
+                icon={PawPrint}
+                label="Excellent / Good"
+                value={
+                  (stats.healthScoreCategoryBreakdown.find(c => c.name === 'Excellent')?.value ?? 0) +
+                  (stats.healthScoreCategoryBreakdown.find(c => c.name === 'Good')?.value ?? 0)
+                }
+                sub="High-scoring pets"
+              />
+              <StatCard
+                icon={Users}
+                label="Needs Attention"
+                value={
+                  (stats.healthScoreCategoryBreakdown.find(c => c.name === 'Fair')?.value ?? 0) +
+                  (stats.healthScoreCategoryBreakdown.find(c => c.name === 'Poor')?.value ?? 0)
+                }
+                sub="Fair or Poor scores"
+              />
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-6">
+              {/* Scores over time */}
+              <div className="md:col-span-2 rounded-xl border border-border bg-card p-5 space-y-3">
+                <h3 className="text-sm font-semibold text-foreground">Avg Health Score — Last 14 Days</h3>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={stats.healthScoresByDay} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                    <YAxis domain={[0, 100]} allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(val: any) => [val || 'No data', 'Avg score']} />
+                    <Bar dataKey="avg" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Category breakdown */}
+              <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+                <h3 className="text-sm font-semibold text-foreground">Score Categories</h3>
+                {stats.healthScoreCategoryBreakdown.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <PieChart>
+                      <Pie
+                        data={stats.healthScoreCategoryBreakdown}
+                        cx="50%" cy="50%"
+                        innerRadius={45} outerRadius={70}
+                        dataKey="value"
+                        label={({ name, value }) => `${name} (${value})`}
+                        labelLine={false}
+                      >
+                        {stats.healthScoreCategoryBreakdown.map((entry, i) => {
+                          const catColors: Record<string, string> = { Excellent: '#16a34a', Good: '#4a7c59', Fair: '#ea580c', Poor: '#dc2626', unknown: '#94a3b8' };
+                          return <Cell key={i} fill={catColors[entry.name] ?? COLORS[i % COLORS.length]} />;
+                        })}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-sm text-muted-foreground pt-4">No scores yet</p>
+                )}
               </div>
             </div>
           </>

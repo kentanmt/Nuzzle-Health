@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { SignupDialog } from '@/components/SignupDialog';
 import { LoginDialog } from '@/components/LoginDialog';
+import { posthog } from '@/providers/PostHogProvider';
 // ── Types ──────────────────────────────────────────────
 
 type Step = 'species' | 'symptoms' | 'followUp' | 'behavioral' | 'history' | 'petInfo' | 'loading' | 'result';
@@ -373,6 +374,29 @@ export default function TriagePage() {
 
       setResult(data);
       setStep('result');
+
+      // Persist triage session for analytics (fire-and-forget, non-blocking)
+      supabase.from('triage_sessions' as any).insert({
+        user_id: user?.id ?? null,
+        species: state.petInfo.species || null,
+        breed: state.petInfo.breed || null,
+        age: state.petInfo.age || null,
+        pet_name: state.petInfo.name || null,
+        symptoms: state.symptoms,
+        urgency_level: data.level,
+        result: data,
+        zip_code: state.petInfo.zipCode || null,
+      }).then(({ error }) => { if (error) console.error('triage session save error:', error); });
+
+      // PostHog event
+      posthog.capture('triage_completed', {
+        urgency_level: data.level,
+        species: state.petInfo.species,
+        breed: state.petInfo.breed || null,
+        symptom_count: state.symptoms.length,
+        has_zip: !!state.petInfo.zipCode,
+        is_logged_in: !!user,
+      });
 
       // Fetch nearby vets if zip code provided
       if (state.petInfo.zipCode) {
