@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -39,10 +39,15 @@ export function useAIHealth(isRealPet: boolean, dataReady: boolean) {
   const [data, setData] = useState<AIHealthData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isFetching = useRef(false);
+  const hasFetched = useRef(false);
 
   const fetchAIHealth = useCallback(async () => {
     if (!user || !isRealPet || !dataReady || !session?.access_token) return;
+    if (isFetching.current) return; // prevent duplicate calls
+    if (hasFetched.current && data) return; // already have data, don't re-fetch
 
+    isFetching.current = true;
     setLoading(true);
     setError(null);
 
@@ -63,17 +68,24 @@ export function useAIHealth(isRealPet: boolean, dataReady: boolean) {
       }
 
       setData(fnData as AIHealthData);
+      hasFetched.current = true;
     } catch (err: any) {
       console.error('AI health fetch error:', err);
       setError(err.message);
     } finally {
       setLoading(false);
+      isFetching.current = false;
     }
-  }, [user, session, isRealPet, dataReady]);
+  }, [user, session, isRealPet, dataReady, data]);
 
   useEffect(() => {
     fetchAIHealth();
   }, [fetchAIHealth]);
 
-  return { data, loading, error, refetch: fetchAIHealth };
+  const refetch = useCallback(async () => {
+    hasFetched.current = false;
+    await fetchAIHealth();
+  }, [fetchAIHealth]);
+
+  return { data, loading, error, refetch };
 }
