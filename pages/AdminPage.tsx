@@ -235,6 +235,8 @@ export default function AdminPage() {
       supabase.from('pets').select('id', { count: 'exact', head: true }),
     ]);
 
+    if (waitlistRes.error) console.error('waitlist query error:', waitlistRes.error);
+    console.log('waitlist rows returned:', waitlistRes.data?.length ?? 0);
     const waitlist: WaitlistRow[] = (waitlistRes.data as WaitlistRow[]) ?? [];
 
     // Species breakdown
