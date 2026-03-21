@@ -67,36 +67,13 @@ serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const geminiApiKey = Deno.env.get("GEMINI_API_KEY")!;
     const openaiApiKey = Deno.env.get("OPENAI_API_KEY") || "";
 
-    // Decode JWT payload to get user ID (Supabase gateway already verified signature)
-    const token = authHeader.slice(7);
-    let userId: string;
-    try {
-      const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-      const pad = b64.length % 4;
-      const padded = pad ? b64 + "=".repeat(4 - pad) : b64;
-      const payload = JSON.parse(atob(padded));
-      userId = payload.sub;
-      if (!userId) throw new Error("No sub");
-    } catch {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
+    // Pass Authorization header through to Supabase client — RLS enforces data isolation
+    const authHeader = req.headers.get("Authorization") ?? "";
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } },
     });
@@ -104,7 +81,6 @@ serve(async (req) => {
     const { data: pets } = await supabase
       .from("pets")
       .select("*")
-      .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(1);
 

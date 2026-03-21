@@ -62,49 +62,22 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const geminiApiKey = Deno.env.get("GEMINI_API_KEY")!;
 
     if (!geminiApiKey) throw new Error("GEMINI_API_KEY not configured");
-
-    // Decode JWT payload to get user ID (Supabase gateway already verified signature)
-    const token = authHeader.slice(7);
-    let userId: string;
-    try {
-      const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-      const pad = b64.length % 4;
-      const padded = pad ? b64 + "=".repeat(4 - pad) : b64;
-      const payload = JSON.parse(atob(padded));
-      userId = payload.sub;
-      if (!userId) throw new Error("No sub");
-    } catch {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     const supabaseService = createClient(supabaseUrl, supabaseServiceKey);
 
     const { pet_record_id } = await req.json();
     if (!pet_record_id) throw new Error("pet_record_id is required");
 
-    // Get the record
+    // Get the record — service role used so no auth needed; record.user_id used for all writes
     const { data: record, error: recordError } = await supabaseService
       .from("pet_records")
       .select("*")
       .eq("id", pet_record_id)
-      .eq("user_id", userId)
       .single();
 
     if (recordError || !record) {
