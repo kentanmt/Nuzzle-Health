@@ -27,7 +27,7 @@ export default function RecordsPage() {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const { user, session } = useAuth();
-  const { pet, petRecords, parsedLabs, isRealPet, refetch } = usePetData();
+  const { pet, petRecords, parsedLabs, isRealPet, refetch, parsePdfRecord } = usePetData();
 
   const [reparsingId, setReparsingId] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
@@ -133,11 +133,9 @@ export default function RecordsPage() {
         .eq('pet_record_id', recordId)
         .eq('user_id', user.id);
 
-      // Re-trigger parsing
-      await supabase.functions.invoke('parse-lab-pdf', {
-        body: { pet_record_id: recordId },
-        headers: { Authorization: `Bearer ${session?.access_token}` },
-      });
+      // Re-trigger parsing client-side
+      const record = petRecords.find((r: any) => r.id === recordId);
+      if (record) await parsePdfRecord(record);
 
       toast({ title: 'Re-parsed successfully ✨', description: 'Lab data has been updated across all tabs.' });
       await refetch();
