@@ -120,10 +120,15 @@ export function usePetData() {
     const parsedIds = new Set((existing || []).map((e: any) => e.pet_record_id));
     const unparsed = labRecords.filter((r) => !parsedIds.has(r.id));
 
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+    if (!accessToken) return;
+
     for (const record of unparsed) {
       try {
         await supabase.functions.invoke('parse-lab-pdf', {
           body: { pet_record_id: record.id },
+          headers: { Authorization: `Bearer ${accessToken}` },
         });
       } catch (err) {
         console.error('Failed to parse record:', record.id, err);

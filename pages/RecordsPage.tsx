@@ -134,8 +134,11 @@ export default function RecordsPage() {
         .eq('user_id', user.id);
 
       // Re-trigger parsing
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
       await supabase.functions.invoke('parse-lab-pdf', {
         body: { pet_record_id: recordId },
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
       });
 
       toast({ title: 'Re-parsed successfully ✨', description: 'Lab data has been updated across all tabs.' });

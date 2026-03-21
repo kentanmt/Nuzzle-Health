@@ -47,7 +47,11 @@ export function useAIHealth(isRealPet: boolean, dataReady: boolean) {
     setError(null);
 
     try {
-      const { data: fnData, error: fnError } = await supabase.functions.invoke('pet-health-ai', {});
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('pet-health-ai', {
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+      });
 
       if (fnError) {
         console.error('AI health error:', fnError);
