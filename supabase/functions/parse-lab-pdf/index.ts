@@ -77,17 +77,24 @@ serve(async (req) => {
 
     if (!geminiApiKey) throw new Error("GEMINI_API_KEY not configured");
 
+    // Decode JWT payload to get user ID (Supabase gateway already verified signature)
+    const token = authHeader.slice(7);
+    let userId: string;
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      userId = payload.sub;
+      if (!userId) throw new Error("No sub");
+    } catch {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const supabaseService = createClient(supabaseUrl, supabaseServiceKey);
-    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
 
     const { pet_record_id } = await req.json();
     if (!pet_record_id) throw new Error("pet_record_id is required");
-
-    const { data: { user: authUser }, error: authErr } = await supabaseUser.auth.getUser();
-    if (authErr || !authUser) throw new Error("Unauthorized");
-    const userId = authUser.id;
 
     // Get the record
     const { data: record, error: recordError } = await supabaseService

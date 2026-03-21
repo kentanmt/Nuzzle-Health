@@ -80,22 +80,28 @@ serve(async (req) => {
     const geminiApiKey = Deno.env.get("GEMINI_API_KEY")!;
     const openaiApiKey = Deno.env.get("OPENAI_API_KEY") || "";
 
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
+    // Decode JWT payload to get user ID (Supabase gateway already verified signature)
+    const token = authHeader.slice(7);
+    let userId: string;
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      userId = payload.sub;
+      if (!userId) throw new Error("No sub");
+    } catch {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
     const { data: pets } = await supabase
       .from("pets")
       .select("*")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(1);
 

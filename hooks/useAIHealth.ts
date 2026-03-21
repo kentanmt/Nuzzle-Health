@@ -69,7 +69,7 @@ export function useAIHealth(isRealPet: boolean, dataReady: boolean) {
     } finally {
       setLoading(false);
     }
-  }, [user, isRealPet, dataReady]);
+  }, [user, session, isRealPet, dataReady]);
 
   useEffect(() => {
     fetchAIHealth();

@@ -137,10 +137,10 @@ export function usePetData() {
   }, [user, session, petRecords, fetchData]);
 
   useEffect(() => {
-    if (petRecords.length > 0) {
+    if (petRecords.length > 0 && session?.access_token) {
       parseUnprocessedRecords();
     }
-  }, [petRecords.length]);
+  }, [petRecords.length, session?.access_token, parseUnprocessedRecords]);
 
   // Aggregate all vaccinations from parsed labs, then deduplicate by vaccine type
   // keeping only the MOST RECENT administration per normalized vaccine name
