@@ -25,8 +25,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { pet: userPet, petRecords, parsedLabs, isRealPet, refetch, weightHistory } = usePetData();
   const { data: aiHealth, loading: aiLoading, error: aiError, refetch: refetchAI } = useAIHealth(
-    isRealPet, 
-    isRealPet && (parsedLabs.length > 0 || (userPet?.existingConditions?.length ?? 0) > 0)
+    isRealPet,
+    isRealPet // run AI as soon as a real pet exists, regardless of lab data
   );
 
   // Gate: redirect to landing if not authenticated
