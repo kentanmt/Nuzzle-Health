@@ -38,7 +38,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: metadata },
+      options: {
+        data: metadata,
+        // After confirming email, land on dashboard (Supabase client picks up the hash & signs in)
+        emailRedirectTo: `${window.location.origin}/dashboard`,
+      },
     });
     return { error: error as Error | null };
   };

@@ -282,12 +282,64 @@ export default function TriagePage() {
     if (!zipCode || zipCode.length !== 5) return;
     setVetsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('find-nearby-vets', {
-        body: { zipCode, urgencyLevel },
+      // Step 1: Geocode zip via Nominatim (public API, no key needed)
+      const geoRes = await fetch(
+        `https://nominatim.openstreetmap.org/search?postalcode=${zipCode}&country=US&format=json&limit=1`,
+        { headers: { 'User-Agent': 'NuzzleHealth/1.0 (nuzzlehealth.pet)' } },
+      );
+      if (!geoRes.ok) return;
+      const geoData = await geoRes.json();
+      if (!geoData.length) return;
+
+      const lat = parseFloat(geoData[0].lat);
+      const lon = parseFloat(geoData[0].lon);
+      const radiusMeters = 24000; // ~15 miles
+
+      // Step 2: Query Overpass for vet clinics (public API, no key needed)
+      const query = `[out:json][timeout:15];(node["amenity"="veterinary"](around:${radiusMeters},${lat},${lon});way["amenity"="veterinary"](around:${radiusMeters},${lat},${lon});node["healthcare"="veterinary"](around:${radiusMeters},${lat},${lon}););out center body;`;
+      const ovRes = await fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        body: `data=${encodeURIComponent(query)}`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
-      if (!error && data?.vets) {
-        setNearbyVets(data.vets);
-      }
+      if (!ovRes.ok) return;
+      const ovData = await ovRes.json();
+
+      const haversine = (la1: number, lo1: number, la2: number, lo2: number) => {
+        const R = 3958.8;
+        const dLat = (la2 - la1) * Math.PI / 180;
+        const dLon = (lo2 - lo1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(la1 * Math.PI / 180) * Math.cos(la2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      };
+
+      const isEmergency = urgencyLevel === 'emergency' || urgencyLevel === 'vet-soon';
+      const vets: NearbyVet[] = (ovData.elements || [])
+        .map((el: any) => {
+          const elLat = el.lat ?? el.center?.lat;
+          const elLon = el.lon ?? el.center?.lon;
+          if (!elLat || !elLon) return null;
+          const tags = el.tags || {};
+          const name = tags.name || 'Veterinary Clinic';
+          const dist = haversine(lat, lon, elLat, elLon);
+          const nameLC = name.toLowerCase();
+          const type: NearbyVet['type'] = (nameLC.includes('emergency') || nameLC.includes('24') || tags.opening_hours === '24/7')
+            ? 'emergency' : nameLC.includes('urgent') ? 'urgent-care' : 'general';
+          const address = [tags['addr:housenumber'], tags['addr:street'], tags['addr:city'], tags['addr:state']].filter(Boolean).join(' ');
+          return { name, address, phone: tags.phone || tags['contact:phone'] || '', distance: `${dist.toFixed(1)} mi`, distNum: dist, type };
+        })
+        .filter(Boolean)
+        .sort((a: any, b: any) => {
+          if (isEmergency) {
+            if (a.type === 'emergency' && b.type !== 'emergency') return -1;
+            if (a.type !== 'emergency' && b.type === 'emergency') return 1;
+          }
+          return a.distNum - b.distNum;
+        })
+        .slice(0, 5)
+        .map(({ distNum, ...rest }: any) => rest);
+
+      setNearbyVets(vets);
     } catch (err) {
       console.error('Failed to fetch nearby vets:', err);
     } finally {
@@ -757,6 +809,9 @@ export default function TriagePage() {
                   <VetReferralCard
                     urgencyLevel={result.level}
                     petName={state.petInfo.name || undefined}
+                    nearbyVets={nearbyVets}
+                    vetsLoading={vetsLoading}
+                    zipCode={state.petInfo.zipCode || undefined}
                   />
                 )}
 

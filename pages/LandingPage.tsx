@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, TrendingUp, Shield, Bell, Sparkles, HeadphonesIcon, BookOpen, Receipt, Mail, Stethoscope, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { VideoHero } from '@/components/VideoHero';
 import { SignupDialog } from '@/components/SignupDialog';
 import { LoginDialog } from '@/components/LoginDialog';
 import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/hooks/use-toast';
 import heroDog from '@/assets/hero-dog.png';
 
 const features = [
@@ -23,9 +24,20 @@ const features = [
 export default function LandingPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [showSignup, setShowSignup] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Detect Supabase email-confirmation redirect (hash contains type=signup)
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.includes('type=signup') || hash.includes('type=email_change')) {
+      toast({ title: '✅ Email confirmed!', description: 'Your account is active. Sign in to access your dashboard.' });
+      // Clean the hash from the URL without causing a navigation
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
 
   const handleDashboardClick = () => {
     if (user) {
@@ -59,6 +71,15 @@ export default function LandingPage() {
             <Button variant="ghost" size="sm" className="text-foreground font-medium hover:text-primary" onClick={handleDashboardClick}>
               My Pet's Health
             </Button>
+            {user ? (
+              <Button variant="ghost" size="sm" className="text-foreground font-medium hover:text-primary" onClick={() => navigate('/dashboard')}>
+                Dashboard
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm" className="text-foreground font-medium hover:text-primary" onClick={() => setShowLogin(true)}>
+                Sign In
+              </Button>
+            )}
             <Link to="/waitlist">
               <Button size="sm">Join Waitlist</Button>
             </Link>

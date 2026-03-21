@@ -144,11 +144,18 @@ export default function WaitlistPage() {
                 <p className="text-muted-foreground">
                   We'll reach out to <span className="font-medium text-foreground">{form.email}</span> when we're ready to welcome you.
                 </p>
-                <Link to="/triage">
-                  <Button variant="outline" className="gap-2 mt-4">
-                    Try the Symptom Checker <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </Link>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center mt-4">
+                  <Link to="/dashboard">
+                    <Button className="gap-2 w-full sm:w-auto">
+                      See your pet's health score <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                  <Link to="/triage">
+                    <Button variant="outline" className="gap-2 w-full sm:w-auto">
+                      Try the Symptom Checker <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                </div>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="rounded-2xl border border-border bg-card p-8 space-y-5">
