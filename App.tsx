@@ -20,6 +20,7 @@ import HowItWorksPage from "./pages/HowItWorksPage";
 import MethodologyPage from "./pages/MethodologyPage";
 import ActivityPage from "./pages/ActivityPage";
 import NotFound from "./pages/NotFound";
+import DogBloodworkPage from "./pages/learn/DogBloodworkPage";
 
 const queryClient = new QueryClient();
 
@@ -47,6 +48,7 @@ const App = () => (
           <Route path="/methodology" element={<MethodologyPage />} />
           <Route path="/membership" element={<WaitlistPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/learn/dog-bloodwork-explained" element={<DogBloodworkPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
         </PostHogProvider>
