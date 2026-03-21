@@ -9,7 +9,7 @@ const corsHeaders = {
 async function getRagContext(
   markers: any[],
   species: string,
-  geminiApiKey: string,
+  openaiApiKey: string,
   supabaseUrl: string,
   supabaseKey: string
 ): Promise<string> {
@@ -24,13 +24,14 @@ async function getRagContext(
     const query = `${species} lab markers: ${queryTerms} interpretation reference ranges clinical significance`;
 
     const embeddingRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/embedding-001:embedContent?key=${geminiApiKey}`,
+      "https://api.openai.com/v1/embeddings",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiApiKey}` },
         body: JSON.stringify({
-          model: "models/embedding-001",
-          content: { parts: [{ text: query }] },
+          model: "text-embedding-3-small",
+          input: query,
+          dimensions: 768,
         }),
       }
     );
@@ -38,7 +39,7 @@ async function getRagContext(
     if (!embeddingRes.ok) return "";
 
     const embeddingData = await embeddingRes.json();
-    const embedding = embeddingData.embedding.values;
+    const embedding = embeddingData.data[0].embedding;
 
     const supabase = createClient(supabaseUrl, supabaseKey);
     const { data } = await supabase.rpc("match_vet_knowledge", {
@@ -77,6 +78,7 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const geminiApiKey = Deno.env.get("GEMINI_API_KEY")!;
+    const openaiApiKey = Deno.env.get("OPENAI_API_KEY") || "";
 
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } },
@@ -239,7 +241,7 @@ serve(async (req) => {
     const ragContext = await getRagContext(
       latestMarkers,
       pet.species || "dog",
-      geminiApiKey,
+      openaiApiKey,
       supabaseUrl,
       supabaseKey
     );
