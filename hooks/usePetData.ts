@@ -126,10 +126,18 @@ export function usePetData() {
     isParsing.current = true;
     for (const record of unparsed) {
       try {
-        await supabase.functions.invoke('parse-lab-pdf', {
+        let result = await supabase.functions.invoke('parse-lab-pdf', {
           body: { pet_record_id: record.id },
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
+        // Retry once after 3s if rate limited
+        if (result.error) {
+          await new Promise(r => setTimeout(r, 3000));
+          result = await supabase.functions.invoke('parse-lab-pdf', {
+            body: { pet_record_id: record.id },
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+        }
       } catch (err) {
         console.error('Failed to parse record:', record.id, err);
       }
