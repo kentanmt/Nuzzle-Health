@@ -1,5 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
+export const config = { runtime: 'edge' };
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
 const breedBenchmarks: Record<string, any> = {
   'labrador retriever': { weight: '55–80 lbs', senior: 7, lifespan: '10–12 yrs', predispositions: 'Hip dysplasia, obesity, exercise-induced collapse, PRA', screening: 'Hip eval after age 2, weight monitoring, annual eye exam' },
   'golden retriever': { weight: '55–75 lbs', senior: 7, lifespan: '10–12 yrs', predispositions: 'Cancer (hemangiosarcoma, lymphoma), hip dysplasia, SAS, hypothyroidism', screening: 'Cancer screening after age 6, annual cardiac exam, thyroid panel' },
@@ -38,33 +46,22 @@ const breedBenchmarks: Record<string, any> = {
   'scottish fold': { weight: '6–13 lbs', senior: 10, lifespan: '11–14 yrs', predispositions: 'Osteochondrodysplasia, PKD, cardiomyopathy', screening: 'Joint health monitoring, PKD screening, cardiac eval' },
 };
 
-async function getRagContext(
-  markers: any[],
-  species: string,
-  openaiApiKey: string,
-  supabaseUrl: string,
-  supabaseKey: string,
-): Promise<string> {
+async function getRagContext(markers: any[], species: string, openaiApiKey: string, supabaseUrl: string, supabaseKey: string): Promise<string> {
   try {
     if (!openaiApiKey || !markers || markers.length === 0) return '';
-
     const outOfRange = markers.filter((m: any) => m.status && m.status !== 'normal');
     const queryTerms = outOfRange.length > 0
       ? outOfRange.map((m: any) => `${m.name} ${m.status}`).join(', ')
       : markers.slice(0, 5).map((m: any) => m.name).join(', ');
-
     const query = `${species} lab markers: ${queryTerms} interpretation reference ranges clinical significance`;
-
     const embeddingRes = await fetch('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiApiKey}` },
       body: JSON.stringify({ model: 'text-embedding-3-small', input: query, dimensions: 768 }),
     });
     if (!embeddingRes.ok) return '';
-
     const embeddingData = await embeddingRes.json();
     const embedding = embeddingData.data[0].embedding;
-
     const supabase = createClient(supabaseUrl, supabaseKey);
     const { data } = await supabase.rpc('match_vet_knowledge', {
       query_embedding: embedding,
@@ -72,7 +69,6 @@ async function getRagContext(
       filter_species: species === 'cat' ? 'cat' : 'dog',
       filter_document_type: null,
     });
-
     if (!data || data.length === 0) return '';
     const context = (data as any[]).map((d) => `[${d.source}]\n${d.content}`).join('\n\n---\n\n');
     return `\n\n## Retrieved Veterinary Reference Data (use to ground scoring and insights)\n${context}`;
@@ -81,58 +77,33 @@ async function getRagContext(
   }
 }
 
-export default async function handler(req: any, res: any) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
-  if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
+export default async function handler(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   try {
-    const authHeader: string = req.headers.authorization || req.headers['Authorization'] || '';
+    const authHeader = req.headers.get('Authorization') ?? '';
     const accessToken = authHeader.replace('Bearer ', '').trim();
-    if (!accessToken) { res.status(401).json({ error: 'Authorization required' }); return; }
+    if (!accessToken) return new Response(JSON.stringify({ error: 'Authorization required' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-    const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-    const supabaseKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY!;
-    const geminiApiKey = process.env.VITE_GEMINI_KEY!;
-    const openaiApiKey = process.env.VITE_OPENAI_KEY || '';
+    const env = process.env as any;
+    const supabaseUrl = env.VITE_SUPABASE_URL!;
+    const supabaseKey = env.VITE_SUPABASE_PUBLISHABLE_KEY!;
+    const geminiApiKey = env.VITE_GEMINI_KEY!;
+    const openaiApiKey = env.VITE_OPENAI_KEY || '';
 
-    if (!geminiApiKey) {
-      console.error('Missing VITE_GEMINI_KEY env var');
-      throw new Error('GEMINI API key not configured');
-    }
+    if (!geminiApiKey) return new Response(JSON.stringify({ error: 'Server misconfigured: missing GEMINI key' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-    // Use user token so RLS enforces data isolation
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: `Bearer ${accessToken}` } },
     });
 
-    const { data: pets } = await supabase
-      .from('pets')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    if (!pets || pets.length === 0) {
-      res.status(404).json({ error: 'No pet found' });
-      return;
-    }
+    const { data: pets } = await supabase.from('pets').select('*').order('created_at', { ascending: false }).limit(1);
+    if (!pets || pets.length === 0) return new Response(JSON.stringify({ error: 'No pet found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
     const pet = pets[0];
-
-    const { data: labs } = await supabase
-      .from('parsed_lab_results')
-      .select('*')
-      .eq('pet_id', pet.id)
-      .order('test_date', { ascending: false });
-
-    const { data: records } = await supabase
-      .from('pet_records')
-      .select('id, title, record_type, record_date, created_at')
-      .eq('pet_id', pet.id)
-      .order('created_at', { ascending: false });
+    const { data: labs } = await supabase.from('parsed_lab_results').select('*').eq('pet_id', pet.id).order('test_date', { ascending: false });
+    const { data: records } = await supabase.from('pet_records').select('id, title, record_type, record_date, created_at').eq('pet_id', pet.id).order('created_at', { ascending: false });
 
     const labsWithMarkers = (labs || []).filter((l: any) => l.markers && (l.markers as any[]).length > 0);
     const rawVaccinations = (labs || []).flatMap((l: any) => (l.vaccinations as any[]) || []);
@@ -155,13 +126,9 @@ export default async function handler(req: any, res: any) {
     for (const vax of rawVaccinations) {
       const key = normalizeVaxName(vax.name);
       const existing = vaxByType.get(key);
-      if (!existing) {
-        vaxByType.set(key, vax);
-      } else {
-        const existingDate = existing.date_administered || existing.dateAdministered;
-        const newDate = vax.date_administered || vax.dateAdministered;
-        const existingTime = existingDate ? new Date(existingDate).getTime() : 0;
-        const newTime = newDate ? new Date(newDate).getTime() : 0;
+      if (!existing) { vaxByType.set(key, vax); } else {
+        const existingTime = existing.date_administered || existing.dateAdministered ? new Date(existing.date_administered || existing.dateAdministered).getTime() : 0;
+        const newTime = vax.date_administered || vax.dateAdministered ? new Date(vax.date_administered || vax.dateAdministered).getTime() : 0;
         if (newTime > existingTime) vaxByType.set(key, vax);
       }
     }
@@ -177,29 +144,19 @@ export default async function handler(req: any, res: any) {
         else if (dueDate < thirtyDaysFromNow) status = 'due_soon';
         return { ...vax, status, _normalized: normalizeVaxName(vax.name) };
       }
-      const adminStr = vax.date_administered || vax.dateAdministered;
-      if (adminStr) return { ...vax, status: 'current', _normalized: normalizeVaxName(vax.name) };
-      return { ...vax, _normalized: normalizeVaxName(vax.name) };
+      return { ...vax, status: 'current', _normalized: normalizeVaxName(vax.name) };
     });
 
     const today = nowDate.toISOString().split('T')[0];
-
     const breedKey = (pet.breed || 'mixed breed').toLowerCase().trim();
     const speciesDefault = pet.species === 'cat' ? 'domestic shorthair' : 'mixed breed';
-    const benchmark =
-      breedBenchmarks[breedKey] ||
-      Object.entries(breedBenchmarks).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] ||
-      breedBenchmarks[speciesDefault];
+    const benchmark = breedBenchmarks[breedKey] || Object.entries(breedBenchmarks).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] || breedBenchmarks[speciesDefault];
 
-    const weightHistory = (labs || [])
-      .filter((l: any) => l.weight_value != null)
-      .map((l: any) => ({ date: l.test_date, weight: l.weight_value, unit: l.weight_unit }))
-      .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const weightHistory = (labs || []).filter((l: any) => l.weight_value != null).map((l: any) => ({ date: l.test_date, weight: l.weight_value, unit: l.weight_unit })).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     let weightTrendAnalysis = 'No weight history available.';
     if (weightHistory.length >= 2) {
-      const first = weightHistory[0];
-      const last = weightHistory[weightHistory.length - 1];
+      const first = weightHistory[0]; const last = weightHistory[weightHistory.length - 1];
       const changeLbs = (last.weight - first.weight).toFixed(1);
       const changePct = (((last.weight - first.weight) / first.weight) * 100).toFixed(1);
       const direction = last.weight > first.weight ? 'gained' : last.weight < first.weight ? 'lost' : 'maintained';
@@ -209,99 +166,45 @@ export default async function handler(req: any, res: any) {
     }
 
     const latestMarkers = labsWithMarkers[0]?.markers || [];
-
     const ragContext = await getRagContext(latestMarkers, pet.species || 'dog', openaiApiKey, supabaseUrl, supabaseKey);
 
     const petContext = {
-      name: pet.name,
-      species: pet.species,
-      breed: pet.breed,
-      age: pet.age,
-      weight: pet.weight,
-      sex: pet.sex,
-      spayed_neutered: pet.spayed_neutered,
-      existing_conditions: pet.existing_conditions || [],
-      medications: pet.medications || [],
-      allergies: pet.allergies || [],
-      total_records: (records || []).length,
-      total_lab_results: labsWithMarkers.length,
-      latest_lab_date: labsWithMarkers[0]?.test_date || null,
-      latest_markers: latestMarkers,
-      all_markers_history: labsWithMarkers.map((l: any) => ({
-        date: l.test_date,
-        vet: l.vet_name,
-        markers: l.markers,
-        weight_value: l.weight_value,
-        weight_unit: l.weight_unit,
-      })),
-      vaccinations: allVaccinations,
-      care_recommendations: allCareRecs,
-      weight_trend_analysis: weightTrendAnalysis,
-      breed_benchmark: benchmark ? {
-        ideal_weight: benchmark.weight,
-        senior_age: benchmark.senior,
-        life_expectancy: benchmark.lifespan,
-        predispositions: benchmark.predispositions,
-        screening_notes: benchmark.screening,
-      } : null,
+      name: pet.name, species: pet.species, breed: pet.breed, age: pet.age, weight: pet.weight, sex: pet.sex,
+      spayed_neutered: pet.spayed_neutered, existing_conditions: pet.existing_conditions || [],
+      medications: pet.medications || [], allergies: pet.allergies || [],
+      total_records: (records || []).length, total_lab_results: labsWithMarkers.length,
+      latest_lab_date: labsWithMarkers[0]?.test_date || null, latest_markers: latestMarkers,
+      all_markers_history: labsWithMarkers.map((l: any) => ({ date: l.test_date, vet: l.vet_name, markers: l.markers, weight_value: l.weight_value, weight_unit: l.weight_unit })),
+      vaccinations: allVaccinations, care_recommendations: allCareRecs, weight_trend_analysis: weightTrendAnalysis,
+      breed_benchmark: benchmark ? { ideal_weight: benchmark.weight, senior_age: benchmark.senior, life_expectancy: benchmark.lifespan, predispositions: benchmark.predispositions, screening_notes: benchmark.screening } : null,
     };
 
     const systemPrompt = `You are Nuzzle Health AI, an expert veterinary health analyst. Today's date is ${today}.
 
 Analyze this pet's complete health profile and return a JSON response with TWO sections:
-
 1. HEALTH SCORE: A comprehensive health score (0-100) with breakdown across 4 dimensions.
 2. INSIGHTS: 3-5 personalized, actionable health insights based on real data.
 
-You will also receive retrieved veterinary reference data from Cornell AHDC, eClinPath, Merck Veterinary Manual, and WSAVA guidelines — use this to ground your scoring and insights in evidence-based medicine.
+You will also receive retrieved veterinary reference data — use this to ground your scoring in evidence-based medicine.
 
 BREED-AWARE SCORING RULES:
-- Bloodwork (0-100): Analyze actual lab markers against reference ranges. Each out-of-range marker reduces the score. BUN below range = mild concern (-5). SDMA or Creatinine elevated = kidney concern (-10-20). ALT/ALP elevated = liver concern (-10-15). All in range = 90-100. If the pet has breed predispositions, pay special attention to related markers.
-- Weight (0-100): Use the breed_benchmark.ideal_weight to assess whether current weight is appropriate. Use weight_trend_analysis for trajectory. Within breed range and stable = 90-95. Outside breed range = 70-80. Significant trend (>10% change) = 60-75.
-- Preventive Care (0-100): CRITICAL - The vaccination data has ALREADY been deduplicated and statuses pre-calculated. TRUST the "status" field on each vaccination entry. "current" = up to date. "due_soon" = within 30 days. "overdue" = past due. Do NOT override these. All current = 90-100. Overdue = -10-15 each. Due soon = -3-5 each. Also consider breed_benchmark.screening_notes for age-appropriate screenings.
-- Age & Conditions (0-100): Use breed_benchmark.senior_age to determine if pet is senior (NOT generic 7yr threshold). Each chronic condition = -10 to -20. If the pet's breed has predispositions matching their conditions, note this. If the pet is past their breed's senior_age, recommend appropriate senior screenings.
+- Bloodwork (0-100): Each out-of-range marker reduces the score. All in range = 90-100.
+- Weight (0-100): Use breed_benchmark.ideal_weight and weight_trend_analysis. Within breed range = 90-95.
+- Preventive Care (0-100): TRUST the pre-calculated "status" field on each vaccination. All current = 90-100. Overdue = -10-15 each.
+- Age & Conditions (0-100): Use breed_benchmark.senior_age. Each chronic condition = -10 to -20.
 
 INSIGHT RULES:
-- Each insight MUST be max 20 words in description, referencing a specific value or date.
-- Title: max 5 words, punchy.
-- Action: max 8 words, verb-first imperative.
-- Include risk level: "low" (good/maintenance), "medium" (watch/action), "high" (urgent).
-- CRITICAL: For vaccines, ONLY flag overdue if pre-calculated status is "overdue". Current = do NOT suggest renewal.
-- Use breed predispositions to generate breed-specific screening insights.
-- Prioritize: overdue vaccines > out-of-range markers > breed-specific risks > weight > condition management > preventive.
-- Do NOT generate generic advice. Every insight must tie to THIS pet's actual data or breed profile.
-- Use retrieved veterinary reference data to provide more accurate and specific interpretations.`;
+- Each insight MUST be max 20 words, referencing a specific value or date.
+- Title: max 5 words. Action: max 8 words, verb-first. Risk: low/medium/high.
+- ONLY flag vaccines as overdue if pre-calculated status is "overdue".`;
 
-    const userPrompt = `Analyze this pet's health data and return ONLY valid JSON (no markdown, no code blocks):
+    const userPrompt = `Analyze this pet's health data and return ONLY valid JSON (no markdown):
 
 ${JSON.stringify(petContext, null, 2)}
 ${ragContext}
 
 Return this exact structure:
-{
-  "health_score": {
-    "overall": number (0-100),
-    "category": "optimal" | "watch" | "elevated",
-    "change": number (positive = improvement, negative = decline, 0 = stable),
-    "summary": "one sentence explaining the score",
-    "breakdown": {
-      "bloodwork": { "score": number, "label": "short explanation" },
-      "weight": { "score": number, "label": "short explanation" },
-      "preventive_care": { "score": number, "label": "short explanation" },
-      "age_conditions": { "score": number, "label": "short explanation" }
-    }
-  },
-  "insights": [
-    {
-      "id": "unique-id",
-      "title": "max 5 words, punchy",
-      "description": "ONE sentence max 20 words, reference a specific value or date",
-      "riskLevel": "low" | "medium" | "high",
-      "action": "max 8 words, verb-first imperative",
-      "category": "bloodwork" | "weight" | "vaccines" | "conditions" | "preventive"
-    }
-  ]
-}`;
+{"health_score":{"overall":number,"category":"optimal"|"watch"|"elevated","change":number,"summary":"string","breakdown":{"bloodwork":{"score":number,"label":"string"},"weight":{"score":number,"label":"string"},"preventive_care":{"score":number,"label":"string"},"age_conditions":{"score":number,"label":"string"}}},"insights":[{"id":"string","title":"string","description":"string","riskLevel":"low"|"medium"|"high","action":"string","category":"bloodwork"|"weight"|"vaccines"|"conditions"|"preventive"}]}`;
 
     const aiResponse = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
@@ -319,33 +222,19 @@ Return this exact structure:
     if (!aiResponse.ok) {
       const errText = await aiResponse.text();
       console.error('Gemini error:', aiResponse.status, errText);
-      if (aiResponse.status === 429) {
-        res.status(429).json({ error: 'Rate limited, please try again later.' });
-        return;
-      }
-      res.status(500).json({ error: 'AI analysis failed' });
-      return;
+      const status = aiResponse.status === 429 ? 429 : 500;
+      const msg = aiResponse.status === 429 ? 'Rate limited, please try again later.' : 'AI analysis failed';
+      return new Response(JSON.stringify({ error: msg }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     const aiData = await aiResponse.json();
     let rawContent = aiData.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-    rawContent = rawContent.trim();
-    if (rawContent.startsWith('```')) {
-      rawContent = rawContent.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    }
+    rawContent = rawContent.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
 
-    let parsed;
-    try {
-      parsed = JSON.parse(rawContent);
-    } catch {
-      console.error('Failed to parse AI health response:', rawContent);
-      res.status(500).json({ error: 'Could not parse AI response' });
-      return;
-    }
-
-    res.status(200).json(parsed);
+    const parsed = JSON.parse(rawContent);
+    return new Response(JSON.stringify(parsed), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err: any) {
     console.error('pet-health-ai error:', err);
-    res.status(500).json({ error: err.message || 'Unknown error' });
+    return new Response(JSON.stringify({ error: err.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 }

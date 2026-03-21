@@ -1,5 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
+export const config = { runtime: 'edge' };
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
 const SYSTEM_PROMPT = `You are a veterinary triage AI assistant for Nuzzle Health, a pet health platform. You provide thoughtful, empathetic, and medically informed symptom assessments for dogs and cats.
 
 You will receive structured data about a pet's symptoms, follow-up answers, behavioral observations, medical history, AND retrieved veterinary knowledge context from authoritative sources (Cornell AHDC, eClinPath, Merck Veterinary Manual, WSAVA guidelines).
@@ -78,27 +86,18 @@ const breedProfiles: Record<string, { predispositions: string; screening: string
   'domestic shorthair': { predispositions: 'Obesity, dental disease, FLUTD, diabetes, CKD', screening: 'Weight management, senior bloodwork from age 7' },
 };
 
-async function getRagContext(
-  symptoms: string[],
-  species: string,
-  openaiApiKey: string,
-  supabaseUrl: string,
-  supabaseKey: string,
-): Promise<string> {
+async function getRagContext(symptoms: string[], species: string, openaiApiKey: string, supabaseUrl: string, supabaseKey: string): Promise<string> {
   try {
     if (!openaiApiKey || symptoms.length === 0) return '';
     const query = `${species} symptoms: ${symptoms.join(', ')}`;
-
     const embeddingRes = await fetch('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiApiKey}` },
       body: JSON.stringify({ model: 'text-embedding-3-small', input: query, dimensions: 768 }),
     });
     if (!embeddingRes.ok) return '';
-
     const embeddingData = await embeddingRes.json();
     const embedding = embeddingData.data[0].embedding;
-
     const supabase = createClient(supabaseUrl, supabaseKey);
     const { data } = await supabase.rpc('match_vet_knowledge', {
       query_embedding: embedding,
@@ -106,7 +105,6 @@ async function getRagContext(
       filter_species: species === 'dog' ? 'dog' : 'cat',
       filter_document_type: null,
     });
-
     if (!data || data.length === 0) return '';
     const context = (data as any[]).map((d) => `[${d.source}]\n${d.content}`).join('\n\n---\n\n');
     return `\n\n## Retrieved Veterinary Knowledge (use to ground your assessment)\n${context}`;
@@ -115,36 +113,25 @@ async function getRagContext(
   }
 }
 
-export default async function handler(req: any, res: any) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
-  if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
+export default async function handler(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    if (!body) { res.status(400).json({ error: 'Request body missing' }); return; }
+    const body = await req.json();
     const { petInfo, symptoms, followUps, behavioral, historyFlags } = body;
 
-    const GEMINI_API_KEY = process.env.VITE_GEMINI_KEY;
-    if (!GEMINI_API_KEY) {
-      console.error('Missing VITE_GEMINI_KEY env var');
-      throw new Error('GEMINI API key not configured');
-    }
+    const GEMINI_API_KEY = (process.env as any).VITE_GEMINI_KEY;
+    if (!GEMINI_API_KEY) return new Response(JSON.stringify({ error: 'Server misconfigured: missing GEMINI key' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-    const OPENAI_API_KEY = process.env.VITE_OPENAI_KEY || '';
-    const supabaseUrl = process.env.VITE_SUPABASE_URL!;
-    const supabaseKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY!;
+    const OPENAI_API_KEY = (process.env as any).VITE_OPENAI_KEY || '';
+    const supabaseUrl = (process.env as any).VITE_SUPABASE_URL!;
+    const supabaseKey = (process.env as any).VITE_SUPABASE_PUBLISHABLE_KEY!;
 
     const ragContext = await getRagContext(symptoms, petInfo.species || 'dog', OPENAI_API_KEY, supabaseUrl, supabaseKey);
 
     const breedKey = (petInfo.breed || '').toLowerCase().trim();
-    const breedData =
-      breedProfiles[breedKey] ||
-      Object.entries(breedProfiles).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] ||
-      null;
+    const breedData = breedProfiles[breedKey] || Object.entries(breedProfiles).find(([k]) => breedKey.includes(k) || k.includes(breedKey))?.[1] || null;
 
     const petDetails = [
       `Species: ${petInfo.species || 'unknown'}`,
@@ -158,15 +145,8 @@ export default async function handler(req: any, res: any) {
     ].filter(Boolean).join('\n');
 
     const symptomList = symptoms.length > 0 ? symptoms.join(', ') : 'None specified';
-    const followUpDetails = followUps.length > 0
-      ? followUps.map((f: { question: string; answer: string }) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')
-      : 'No follow-up details provided';
-    const behavioralNormal = behavioral.length > 0
-      ? `The following are STILL NORMAL: ${behavioral.join(', ')}`
-      : 'Owner did not confirm any normal behaviors (concerning)';
-    const behavioralAbnormal = behavioral.length < 8
-      ? 'Potentially abnormal (not checked as normal): behaviors not confirmed'
-      : 'All behavioral checks confirmed normal';
+    const followUpDetails = followUps.length > 0 ? followUps.map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n') : 'No follow-up details provided';
+    const behavioralNormal = behavioral.length > 0 ? `The following are STILL NORMAL: ${behavioral.join(', ')}` : 'Owner did not confirm any normal behaviors (concerning)';
     const historyDetails = historyFlags.length > 0 ? historyFlags.join(', ') : 'No relevant history flags';
 
     const userMessage = `Please assess the following pet case:
@@ -174,10 +154,7 @@ export default async function handler(req: any, res: any) {
 ## Pet Information
 ${petDetails}
 
-${breedData ? `## Breed Health Profile
-- Known predispositions: ${breedData.predispositions}
-- Recommended screening: ${breedData.screening}
-Consider these breed-specific risks when assessing the symptoms below.` : ''}
+${breedData ? `## Breed Health Profile\n- Known predispositions: ${breedData.predispositions}\n- Recommended screening: ${breedData.screening}\nConsider these breed-specific risks when assessing the symptoms below.` : ''}
 
 ## Reported Symptoms
 ${symptomList}
@@ -187,7 +164,6 @@ ${followUpDetails}
 
 ## Behavioral Assessment
 ${behavioralNormal}
-${behavioralAbnormal}
 Normal behaviors confirmed: ${behavioral.length} out of 8
 
 ## Medical History Flags
@@ -210,31 +186,21 @@ Please provide your triage assessment as JSON.`;
     );
 
     if (!response.ok) {
-      if (response.status === 429) {
-        res.status(429).json({ error: 'Rate limit exceeded. Please try again in a moment.' });
-        return;
-      }
       const errText = await response.text();
       console.error('Gemini error:', response.status, errText);
-      res.status(500).json({ error: 'Failed to get AI assessment' });
-      return;
+      const status = response.status === 429 ? 429 : 500;
+      const msg = response.status === 429 ? 'Rate limit exceeded. Please try again in a moment.' : 'Failed to get AI assessment';
+      return new Response(JSON.stringify({ error: msg }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     const data = await response.json();
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!content) throw new Error('No content in AI response');
 
-    let parsed;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      console.error('Failed to parse AI response:', content);
-      throw new Error('Could not parse AI assessment');
-    }
-
-    res.status(200).json(parsed);
+    const parsed = JSON.parse(content);
+    return new Response(JSON.stringify(parsed), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e: any) {
     console.error('symptom-checker error:', e);
-    res.status(500).json({ error: e.message || 'Unknown error' });
+    return new Response(JSON.stringify({ error: e.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 }
