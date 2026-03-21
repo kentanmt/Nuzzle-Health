@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import type { Pet, LabResult, LabMarker, VaccinationRecord, CareRecommendation } from '@/lib/types';
@@ -9,6 +9,7 @@ export function usePetData() {
   const [petRecords, setPetRecords] = useState<any[]>([]);
   const [parsedLabs, setParsedLabs] = useState<LabResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const isParsing = useRef(false);
 
   const fetchData = useCallback(async () => {
     if (!user) {
@@ -108,6 +109,7 @@ export function usePetData() {
   // Trigger PDF parsing for unprocessed records
   const parseUnprocessedRecords = useCallback(async () => {
     if (!user || !session?.access_token || petRecords.length === 0) return;
+    if (isParsing.current) return;
 
     const parsableTypes = ['lab-report', 'vaccine', 'vet-visit'];
     const labRecords = petRecords.filter((r) => parsableTypes.includes(r.record_type) && r.file_url);
@@ -119,7 +121,9 @@ export function usePetData() {
 
     const parsedIds = new Set((existing || []).map((e: any) => e.pet_record_id));
     const unparsed = labRecords.filter((r) => !parsedIds.has(r.id));
+    if (unparsed.length === 0) return;
 
+    isParsing.current = true;
     for (const record of unparsed) {
       try {
         await supabase.functions.invoke('parse-lab-pdf', {
@@ -131,9 +135,8 @@ export function usePetData() {
       }
     }
 
-    if (unparsed.length > 0) {
-      await fetchData();
-    }
+    await fetchData();
+    isParsing.current = false;
   }, [user, session, petRecords, fetchData]);
 
   useEffect(() => {
